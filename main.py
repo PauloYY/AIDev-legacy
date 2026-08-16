@@ -23,10 +23,12 @@ def main():
         tools=tools,
     )
 
-    agent.run(
-        "Descubra quais arquivos existem "
-        "no projeto test-project."
+    response = agent.run(
+        "Descubra quais arquivos existem no "
+        "projeto test-project e me diga quais são."
     )
+
+    print(response)
 
 
 if __name__ == "__main__":

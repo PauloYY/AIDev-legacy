@@ -11,6 +11,30 @@ class LLMClient:
         self.api_key = Config.llm_api_key
         self.model = Config.llm_model
 
+    def _serialize_message(self, message: Message) -> dict:
+        data = {
+            "role": message.role,
+            "content": message.content
+        }
+
+        if message.role == "tool":
+            data["tool_call_id"] = message.tool_call_id
+
+        if message.role == "assistant" and message.tool_calls:
+            data["tool_calls"] = [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.name,
+                        "arguments": json.dumps(tool_call.arguments),
+                    },
+                }
+                for tool_call in message.tool_calls
+            ]
+        return data
+
+
     def generate(self, messages: list[Message], tools: list[dict] | None = None) -> LLMResponse:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -20,10 +44,7 @@ class LLMClient:
         payload = {
             "model": self.model,
             "messages": [
-                {
-                    "role": message.role,
-                    "content": message.content,
-                }
+                self._serialize_message(message)
                 for message in messages
             ],
         }
@@ -39,6 +60,7 @@ class LLMClient:
         )
 
         response.raise_for_status()
+
         data = response.json()
         message_data = data["choices"][0]["message"]
 

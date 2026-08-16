@@ -12,7 +12,7 @@ class Agent:
         self.llm = llm
         self.tools = tools
 
-    def run(self, prompt: str):
+    def run(self, prompt: str) -> str | None:
         messages = [
             Message(
                 role="user",
@@ -20,17 +20,33 @@ class Agent:
             )
         ]
 
-        response = self.llm.generate(
-            messages,
-            tools=self.tools.definitions,
-        )
-
-        for tool_call in response.tool_calls:
-            result = self.tools.execute(
-                tool_call.name,
-                tool_call.arguments,
+        while True:
+            response = self.llm.generate(
+                messages,
+                tools=self.tools.definitions,
             )
 
-            print("Tool result:", result)
+            if not response.tool_calls:
+                return response.content
 
-        return response
+            messages.append(
+                Message(
+                    role="assistant",
+                    content=response.content,
+                    tool_calls=response.tool_calls
+                )
+            )
+
+            for tool_call in response.tool_calls:
+                result = self.tools.execute(
+                    tool_call.name,
+                    tool_call.arguments,
+                )
+
+                messages.append(
+                    Message(
+                        role="tool",
+                        content=str(result),
+                        tool_call_id=tool_call.id
+                    )
+                )

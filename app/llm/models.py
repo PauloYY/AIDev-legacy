@@ -1,10 +1,6 @@
 from dataclasses import dataclass
 from typing import Any
 
-@dataclass
-class Message:
-    role: str
-    content: str
 
 @dataclass
 class ToolCall:
@@ -12,6 +8,13 @@ class ToolCall:
     name: str
     arguments: dict[str, Any]
 
+@dataclass
+class Message:
+    role: str
+    content: str
+    tool_call_id: str | None = None
+    tool_calls: list[ToolCall] | None = None
+    
 @dataclass
 class LLMResponse:
     content: str | None
