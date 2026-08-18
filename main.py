@@ -1,14 +1,19 @@
 from app.agent.agent import Agent
 from app.llm.router import LLMRouter
+
 from app.exceptions import LLMAPIError, LLMRateLimitError
+
 from app.llm.providers.openrouter import OpenRouterProvider
 from app.llm.providers.groq import GroqProvider
+
 from app.llm.client import LLMClient
 from app.tools.filesystem import (
     LIST_FILES_DEFINITION,
     READ_FILE_DEFINITION,
+    WRITE_FILE_DEFINITION,
     list_files,
-    read_file
+    read_file,
+    write_file
 )
 from app.tools.registry import ToolRegistry
 
@@ -31,6 +36,12 @@ def main():
         READ_FILE_DEFINITION,
     )
 
+    tools.register(
+        "write_file",
+        write_file,
+        WRITE_FILE_DEFINITION
+    )
+
     agent = Agent(
         llm=llm,
         tools=tools,
@@ -39,9 +50,7 @@ def main():
     try:
 
         response = agent.run(
-            "Primeiro descubra quais arquivos existem no projeto test-project."
-            "Depois leia o main.py."
-            "Por fim explique o que o projeto faz."
+            "No projeto test-project melhore o código do arquivo python que faz a média de três valores"
         )
         print(response)
 
