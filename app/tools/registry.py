@@ -1,23 +1,26 @@
-from typing import Any, Callable
+from typing import Any
+
+from app.tools.base import Tool
+from app.tools.filesystem import TOOLS
 
 
 class ToolRegistry:
     def __init__(self):
-        self._tools: dict[str, Callable[..., Any]] = {}
-        self._definitions: list[dict] = []
+        self._tools: dict[str, Tool] = {}
 
-    def register(
-        self,
-        name: str,
-        function: Callable[..., Any],
-        definition: dict,
-    ):
-        self._tools[name] = function
-        self._definitions.append(definition)
+    def register(self, tool: Tool):
+        self._tools[tool.name] = tool
+
+    def load_defaults(self):
+        for tool in TOOLS:
+            self.register(tool)
 
     @property
     def definitions(self) -> list[dict]:
-        return self._definitions
+        return [
+            tool.definition
+            for tool in self._tools.values()
+        ]
 
     def execute(
         self,
@@ -29,4 +32,4 @@ class ToolRegistry:
                 f"Tool não encontrada: {name}"
             )
 
-        return self._tools[name](**arguments)
+        return self._tools[name].execute(arguments)
