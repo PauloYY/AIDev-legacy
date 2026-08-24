@@ -1,4 +1,4 @@
-from app.tools.base import Tool
+from app.tools.base import Tool, ToolType
 from app.tools.filesystem.config import PROJECTS_DIR
 
 
@@ -50,4 +50,5 @@ tool = Tool(
     name="list_files",
     function=list_files,
     definition=definition,
+    type=ToolType.ANALYSIS,
 )

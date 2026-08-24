@@ -1,4 +1,4 @@
-from app.tools.base import Tool
+from app.tools.base import Tool, ToolType
 from app.tools.filesystem.config import PROJECTS_DIR
 
 
@@ -49,4 +49,5 @@ tool = Tool(
     name="read_file",
     function=read_file,
     definition=definition,
+    type=ToolType.ANALYSIS,
 )

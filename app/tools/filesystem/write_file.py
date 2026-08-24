@@ -1,4 +1,4 @@
-from app.tools.base import Tool
+from app.tools.base import Tool, ToolType
 from app.tools.filesystem.config import PROJECTS_DIR
 
 
@@ -59,4 +59,5 @@ tool = Tool(
     name="write_file",
     function=write_file,
     definition=definition,
+    type=ToolType.EXECUTION,
 )
