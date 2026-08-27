@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from app.agent.dependency import Dependency
+from app.agent.planning.dependency import Dependency
 
 
 @dataclass

@@ -1,6 +1,7 @@
-from app.agent.execution_decision import ExecutionDecision
-from app.agent.execution_decision_parser import ExecutionDecisionParser
-from app.agent.task import Task
+from app.agent.execution.execution_decision import ExecutionDecision
+from app.agent.execution.execution_decision_parser import ExecutionDecisionParser
+from app.agent.execution.task import Task
+from app.exceptions import LLMInvalidResponseError
 from app.llm.client import LLMClient
 from app.llm.models import Message
 
@@ -42,6 +43,8 @@ CONTEXTO DAS DEPENDÊNCIAS:
 
 REGRAS:
 - Retorne SOMENTE JSON válido.
+- NÃO execute ferramentas.
+- NÃO produza tool calls.
 - Use exclusivamente a tool indicada na task.
 - Não crie novas tasks.
 - Não crie dependencies.
@@ -69,5 +72,17 @@ Retorne SOMENTE o JSON.
                 )
             ]
         )
+
+        if response.tool_calls:
+            raise LLMInvalidResponseError(
+                "O executor tentou executar ferramentas diretamente. "
+                "O TaskDecisionMaker deve retornar somente um objeto JSON em texto."
+            )
+
+        if response.content is None:
+            raise LLMInvalidResponseError(
+                "O executor não retornou conteúdo. "
+                "A resposta deve conter somente um objeto JSON em texto."
+            )
 
         return self.parser.parse(response.content)

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from app.agent.task import Task
+from app.agent.execution.task import Task
 
 
 class DecisionAction(Enum):

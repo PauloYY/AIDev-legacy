@@ -1,5 +1,5 @@
-from app.agent.project_analyzer import ProjectAnalyzer
-from app.agent.project_summary import ProjectSummary
+from app.agent.context.project_analyzer import ProjectAnalyzer
+from app.agent.context.project_summary import ProjectSummary
 from app.tools.registry import ToolRegistry
 
 

@@ -1,13 +1,13 @@
-from app.agent.decision_parser import DecisionParser
-from app.agent.planner import Planner
-from app.agent.project_analyzer import ProjectAnalyzer
-from app.agent.project_context import ProjectContext
-from app.agent.project_summary import ProjectSummary
+from app.agent.planning.decision_parser import DecisionParser
+from app.agent.planning.planner import Planner
+from app.agent.context.project_analyzer import ProjectAnalyzer
+from app.agent.context.project_context import ProjectContext
+from app.agent.context.project_summary import ProjectSummary
 from app.agent.runner import Runner
-from app.agent.task_context_builder import TaskContextBuilder
-from app.agent.task_decision_maker import TaskDecisionMaker
-from app.agent.execution_decision_parser import ExecutionDecisionParser
-from app.agent.project_summary_updater import ProjectSummaryUpdater
+from app.agent.context.task_context_builder import TaskContextBuilder
+from app.agent.execution.task_decision_maker import TaskDecisionMaker
+from app.agent.execution.execution_decision_parser import ExecutionDecisionParser
+from app.agent.context.project_summary_updater import ProjectSummaryUpdater
 
 from app.exceptions import LLMAPIError, LLMRateLimitError
 
@@ -21,8 +21,13 @@ from app.tools.registry import ToolRegistry
 from app.cli import handle_agent_event
 
 
-PROJECT_NAME = "guess_game"
+PROJECT_NAME = "gerador"
+prompt = """"
+Crie um gerador de senhas automático.
+Use a pasta gerador.
+Faça de forma simples.
 
+"""
 
 def main():
     tools = ToolRegistry()
@@ -72,28 +77,12 @@ def main():
         tools=tools,
         project_context=project_context,
         project_summary_updater=summary_updater,
+        on_event=handle_agent_event,
     )
 
     try:
         response = runner.run(
-            objective=(
-                """
-                Crie um jogo simples de adivinhação para ser executado no terminal.
-
-                O programa deve:
-
-                * gerar aleatoriamente um número entre 1 e 100;
-                * pedir ao jogador que tente adivinhar o número;
-                * informar se o palpite é maior ou menor que o número secreto;
-                * continuar pedindo palpites até que o jogador acerte;
-                * informar ao jogador quantas tentativas foram necessárias.
-
-                Use a pasta `guess_game` para o projeto.
-
-                Mantenha o projeto simples e organizado.
-
-                """
-            ),
+            objective=prompt,
             project_name=PROJECT_NAME,
         )
 

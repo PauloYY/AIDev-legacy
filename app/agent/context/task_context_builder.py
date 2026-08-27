@@ -1,7 +1,7 @@
 from typing import Any
 
-from app.agent.dependency import Dependency
-from app.agent.task import Task
+from app.agent.planning.dependency import Dependency
+from app.agent.execution.task import Task
 
 
 class TaskContextBuilder:

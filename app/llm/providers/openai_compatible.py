@@ -1,7 +1,11 @@
 import httpx
 import json
 
-from app.exceptions import LLMAPIError, LLMRateLimitError
+from app.exceptions import (
+    LLMAPIError,
+    LLMRateLimitError,
+    LLMInvalidResponseError,
+)
 from app.llm.models import LLMResponse, Message, ToolCall
 from app.llm.providers.base import LLMProvider
 
@@ -88,6 +92,9 @@ class OpenAICompatibleProvider(LLMProvider):
 
             if response.status_code == 429 or code == 429:
                 raise LLMRateLimitError(message)
+
+            if "tool choice is none" in message.lower():
+                raise LLMInvalidResponseError(message)
 
             raise LLMAPIError(message)
 

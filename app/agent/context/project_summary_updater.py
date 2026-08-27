@@ -1,5 +1,5 @@
-from app.agent.project_summary import ProjectSummary
-from app.agent.task import Task
+from app.agent.context.project_summary import ProjectSummary
+from app.agent.execution.task import Task
 from app.llm.client import LLMClient
 from app.llm.models import Message
 

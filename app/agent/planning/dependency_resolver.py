@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.agent.dependency import Dependency
+from app.agent.planning.dependency import Dependency
 from app.tools.registry import ToolRegistry
 
 

@@ -1,6 +1,6 @@
 import json
 
-from app.agent.execution_decision import ExecutionDecision
+from app.agent.execution.execution_decision import ExecutionDecision
 
 
 class ExecutionDecisionParser:

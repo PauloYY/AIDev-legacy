@@ -1,5 +1,5 @@
-from app.agent.dependency import Dependency
-from app.agent.task import Task
+from app.agent.planning.dependency import Dependency
+from app.agent.execution.task import Task
 from app.tools.base import ToolType
 from app.tools.registry import ToolRegistry
 

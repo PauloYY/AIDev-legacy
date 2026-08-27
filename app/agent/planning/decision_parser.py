@@ -1,8 +1,8 @@
 import json
 
-from app.agent.decision import Decision, DecisionAction
-from app.agent.dependency import Dependency
-from app.agent.task import Task
+from app.agent.planning.decision import Decision, DecisionAction
+from app.agent.planning.dependency import Dependency
+from app.agent.execution.task import Task
 
 
 class DecisionParser:
