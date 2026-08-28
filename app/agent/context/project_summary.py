@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.tools.filesystem.config import PROJECTS_DIR
+from app.tools.filesystem.config import get_projects_dir
 
 
 class ProjectSummary:
@@ -11,9 +11,15 @@ class ProjectSummary:
         self._cache: dict[str, str] = {}
 
     def exists(self, project_name: str) -> bool:
+        if project_name in self._cache:
+            return True
+
         return self._path(project_name).exists()
 
     def read(self, project_name: str) -> str:
+        if project_name in self._cache:
+            return self._cache[project_name]
+
         path = self._path(project_name)
 
         if not path.exists():
@@ -44,13 +50,12 @@ class ProjectSummary:
         self._cache[project_name] = content
 
     def _path(self, project_name: str) -> Path:
+        projects_dir = get_projects_dir()
         project_path = (
-            PROJECTS_DIR / project_name
+            projects_dir / project_name
         ).resolve()
 
-        if not project_path.is_relative_to(
-            PROJECTS_DIR.resolve()
-        ):
+        if not project_path.is_relative_to(projects_dir):
             raise PermissionError(
                 "Acesso fora do diretório de projetos não permitido."
             )

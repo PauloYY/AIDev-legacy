@@ -2,6 +2,13 @@ from app.agent.events import AgentEvent
 
 
 def handle_agent_event(event: AgentEvent):
+    """Callback de UI: imprime o progresso do agente no terminal.
+
+    Isto é output voltado ao usuário (progresso da execução), diferente do
+    logging interno configurado em app.logging_config — por isso continua
+    usando print() em vez de logging.
+    """
+
     if event.type == "agent_start":
         print("* AIDev está trabalhando...\n")
 
@@ -90,3 +97,8 @@ def handle_agent_event(event: AgentEvent):
 
     elif event.type == "agent_done":
         print("\nAIDev finalizou.")
+
+        usage = event.data.get("usage")
+
+        if usage:
+            print(f"\n{usage}")

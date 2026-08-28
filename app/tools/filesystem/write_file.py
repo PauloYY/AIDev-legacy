@@ -1,9 +1,10 @@
 from app.tools.base import Tool, ToolType
-from app.tools.filesystem.config import PROJECTS_DIR
+from app.tools.filesystem.config import get_projects_dir
 
 
 def write_file(project_name: str, file_path: str, content: str) -> str:
-    project_path = PROJECTS_DIR / project_name
+    projects_dir = get_projects_dir()
+    project_path = projects_dir / project_name
     target_path = project_path / file_path
 
     try:
@@ -23,6 +24,7 @@ def write_file(project_name: str, file_path: str, content: str) -> str:
     target_path.write_text(content, encoding="utf-8")
 
     return f"Arquivo escrito com sucesso: {file_path}"
+
 
 definition = {
     "type": "function",

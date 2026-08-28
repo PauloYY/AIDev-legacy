@@ -1,5 +1,5 @@
 from app.tools.base import Tool, ToolType
-from app.tools.filesystem.config import PROJECTS_DIR
+from app.tools.filesystem.config import get_projects_dir
 
 
 IGNORED_DIRECTORIES = {
@@ -15,9 +15,10 @@ def find_references(
     project_name: str,
     symbol: str,
 ) -> list[str]:
-    project_path = (PROJECTS_DIR / project_name).resolve()
+    projects_dir = get_projects_dir()
+    project_path = (projects_dir / project_name).resolve()
 
-    if not project_path.is_relative_to(PROJECTS_DIR):
+    if not project_path.is_relative_to(projects_dir):
         raise PermissionError(
             "Acesso fora do diretório de projetos não permitido."
         )

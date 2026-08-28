@@ -11,4 +11,5 @@ class GroqProvider(OpenAICompatibleProvider):
             base_url=self.BASE_URL,
             api_key=Config.groq_api_key,
             model=Config.groq_model,
+            name="groq",
         )

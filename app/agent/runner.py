@@ -1,4 +1,7 @@
+import logging
+
 from app.agent.events import AgentEvent
+from app.agent.execution.validator import TaskValidator
 from app.agent.planning.decision import DecisionAction
 from app.agent.planning.planner import Planner
 from app.agent.context.task_context_builder import TaskContextBuilder
@@ -9,11 +12,15 @@ from app.exceptions import LLMInvalidResponseError
 from app.tools.registry import ToolRegistry
 
 
+logger = logging.getLogger(__name__)
+
+
 class Runner:
 
     MAX_PLANNER_ATTEMPTS = 3
     MAX_EXECUTOR_ATTEMPTS = 3
     MAX_REPEATED_TASKS = 3
+    MAX_ITERATIONS = 50
 
     def __init__(
         self,
@@ -23,7 +30,9 @@ class Runner:
         tools: ToolRegistry,
         project_context: ProjectContext,
         project_summary_updater: ProjectSummaryUpdater,
+        validator: TaskValidator | None = None,
         on_event=None,
+        max_iterations: int | None = None,
     ):
         self.planner = planner
         self.task_decision_maker = task_decision_maker
@@ -31,7 +40,9 @@ class Runner:
         self.tools = tools
         self.project_context = project_context
         self.project_summary_updater = project_summary_updater
+        self.validator = validator or TaskValidator(tools)
         self.on_event = on_event
+        self.max_iterations = max_iterations or self.MAX_ITERATIONS
 
     def _emit(self, event_type: str, **data):
         if self.on_event:
@@ -69,8 +80,25 @@ class Runner:
         last_task_signature = None
         repeated_task_count = 0
         planner_retry_context = ""
+        iteration = 0
 
         while True:
+            iteration += 1
+
+            if iteration > self.max_iterations:
+                error = (
+                    f"O agente excedeu o limite de {self.max_iterations} "
+                    "iterações sem concluir o objetivo."
+                )
+
+                logger.error(error)
+
+                self._emit(
+                    "agent_error",
+                    error=error,
+                )
+
+                raise RuntimeError(error)
 
             planner_attempts = 0
 
@@ -89,6 +117,9 @@ class Runner:
                             else context
                         ),
                     )
+
+                    if decision.action == DecisionAction.TASK:
+                        self.validator.validate(decision.task)
 
                 except (ValueError, LLMInvalidResponseError) as error:
                     self._emit(
@@ -119,7 +150,10 @@ class Runner:
                 break
 
             if decision.action == DecisionAction.FINISH:
-                self._emit("agent_done")
+                self._emit(
+                    "agent_done",
+                    usage=self.planner.llm.usage.summary(),
+                )
                 return decision.content
 
             if decision.action == DecisionAction.FAIL:

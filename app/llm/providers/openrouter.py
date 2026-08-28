@@ -11,4 +11,5 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             base_url=self.BASE_URL,
             api_key=Config.openrouter_api_key,
             model=Config.openrouter_model,
+            name="openrouter",
         )
