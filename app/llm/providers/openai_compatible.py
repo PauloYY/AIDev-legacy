@@ -165,6 +165,20 @@ class OpenAICompatibleProvider(LLMProvider):
             f"{self.MAX_RETRIES} tentativas: {last_error}"
         ) from last_error
 
+    @staticmethod
+    def _parse_retry_after(response: httpx.Response) -> float | None:
+        """Lê o header padrão HTTP 'Retry-After' (em segundos), se presente."""
+
+        header = response.headers.get("Retry-After")
+
+        if not header:
+            return None
+
+        try:
+            return float(header)
+        except ValueError:
+            return None
+
     def _raise_for_error(self, response: httpx.Response) -> None:
         try:
             error = response.json().get("error", {})
@@ -186,7 +200,8 @@ class OpenAICompatibleProvider(LLMProvider):
             code = response.status_code
 
         if response.status_code == 429 or code == 429:
-            raise LLMRateLimitError(message)
+            retry_after = self._parse_retry_after(response)
+            raise LLMRateLimitError(message, retry_after=retry_after)
 
         if "tool choice is none" in str(message).lower():
             raise LLMInvalidResponseError(message)

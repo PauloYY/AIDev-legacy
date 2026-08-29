@@ -15,7 +15,17 @@ class LLMError(AIDevError):
 
 class LLMRateLimitError(LLMError):
 
-    """Limite de requisições atingido."""
+    """Limite de requisições atingido.
+
+    ``retry_after`` (segundos), quando informado pela API via header
+    ``Retry-After``, é usado pelo LLMRouter para saber exatamente quanto
+    tempo esperar antes de tentar de novo, em vez de adivinhar com backoff
+    exponencial.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class LLMAPIError(LLMError):

@@ -3,12 +3,13 @@ import json
 from app.agent.planning.decision import Decision, DecisionAction
 from app.agent.planning.dependency import Dependency
 from app.agent.execution.task import Task
+from app.llm.json_extraction import extract_json_object
 
 
 class DecisionParser:
     def parse(self, content: str) -> Decision:
         try:
-            data = json.loads(content)
+            data = json.loads(extract_json_object(content))
         except json.JSONDecodeError as exc:
             raise ValueError("A LLM retornou um JSON inválido.") from exc
 

@@ -82,7 +82,7 @@ def test_raises_when_all_providers_fail():
     a = FakeProvider("a", error=LLMRateLimitError("limite"))
     b = FakeProvider("b", error=LLMRateLimitError("limite"))
 
-    router = LLMRouter([a, b])
+    router = LLMRouter([a, b], max_wait_rounds=0)  # sem espera, para o teste ser rápido
 
     with pytest.raises(LLMRateLimitError):
         router.generate(messages=[])
@@ -93,3 +93,42 @@ def test_raises_when_no_providers_configured():
 
     with pytest.raises(RuntimeError):
         router.generate(messages=[])
+
+
+def test_waits_and_recovers_after_rate_limit(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("app.llm.router.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    calls = {"count": 0}
+
+    class RecoveringProvider(LLMProvider):
+        name = "a"
+
+        def generate(self, messages, tools=None):
+            calls["count"] += 1
+
+            if calls["count"] == 1:
+                raise LLMRateLimitError("limite")
+
+            return _ok_response("a")
+
+    router = LLMRouter([RecoveringProvider()], max_wait_rounds=1, base_wait_seconds=5)
+
+    response = router.generate(messages=[])
+
+    assert response.provider == "a"
+    assert sleeps == [5]  # esperou uma vez antes de conseguir
+
+
+def test_uses_retry_after_instead_of_backoff(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("app.llm.router.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    provider = FakeProvider("a", error=LLMRateLimitError("limite", retry_after=3))
+
+    router = LLMRouter([provider], max_wait_rounds=1, base_wait_seconds=99)
+
+    with pytest.raises(LLMRateLimitError):
+        router.generate(messages=[])
+
+    assert sleeps == [3]  # usou o retry_after (3s), não o backoff (99s)

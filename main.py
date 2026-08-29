@@ -22,7 +22,7 @@ from app.logging_config import setup_logging
 
 from app.llm.client import LLMClient
 from app.llm.providers.base import LLMProvider
-from app.llm.providers.cerebras import CerebrasProvider
+from app.llm.providers.agnes import AgnesProvider
 from app.llm.providers.groq import GroqProvider
 from app.llm.providers.openrouter import OpenRouterProvider
 from app.llm.router import LLMRouter
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 PROVIDER_CLASSES: dict[str, type[LLMProvider]] = {
     "groq": GroqProvider,
     "openrouter": OpenRouterProvider,
-    "cerebras": CerebrasProvider,
+    "agnes": AgnesProvider,
 }
 
 
@@ -97,7 +97,12 @@ def main(argv: list[str] | None = None) -> int:
     tools = ToolRegistry()
     tools.load_defaults()
 
-    router = LLMRouter(providers)
+    router = LLMRouter(
+        providers,
+        max_wait_rounds=Config.rate_limit_max_wait_rounds,
+        base_wait_seconds=Config.rate_limit_base_wait_seconds,
+        max_wait_seconds=Config.rate_limit_max_wait_seconds,
+    )
     llm = LLMClient(router)
 
     summary = ProjectSummary()

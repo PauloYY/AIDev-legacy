@@ -1,4 +1,5 @@
 import json
+from app.llm.json_extraction import extract_json_object
 
 from app.agent.execution.execution_decision import ExecutionDecision
 
@@ -10,7 +11,7 @@ class ExecutionDecisionParser:
         content: str,
     ) -> ExecutionDecision:
         try:
-            data = json.loads(content)
+            data = json.loads(extract_json_object(content))
         except json.JSONDecodeError as exc:
             raise ValueError(
                 "A LLM retornou JSON inválido."

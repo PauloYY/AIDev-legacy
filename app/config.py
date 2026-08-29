@@ -13,8 +13,8 @@ class Config:
     groq_api_key = os.getenv("GROQ_API_KEY")
     groq_model = os.getenv("GROQ_MODEL")
 
-    cerebras_api_key = os.getenv("CEREBRAS_API_KEY")
-    cerebras_model = os.getenv("CEREBRAS_MODEL")
+    agnes_api_key = os.getenv("AGNES_API_KEY")
+    agnes_model = os.getenv("AGNES_MODEL")
 
     projects_dir = os.getenv("AIDEV_PROJECTS_DIR", "projects")
 
@@ -23,11 +23,15 @@ class Config:
 
     max_iterations = int(os.getenv("AIDEV_MAX_ITERATIONS", "50"))
 
+    rate_limit_max_wait_rounds = int(os.getenv("AIDEV_RATE_LIMIT_MAX_WAIT_ROUNDS", "3"))
+    rate_limit_base_wait_seconds = float(os.getenv("AIDEV_RATE_LIMIT_BASE_WAIT_SECONDS", "10"))
+    rate_limit_max_wait_seconds = float(os.getenv("AIDEV_RATE_LIMIT_MAX_WAIT_SECONDS", "90"))
+
     # Nome -> (api_key, model) usado por Config.available_providers().
     _PROVIDER_FIELDS = {
         "groq": ("groq_api_key", "groq_model"),
         "openrouter": ("openrouter_api_key", "openrouter_model"),
-        "cerebras": ("cerebras_api_key", "cerebras_model"),
+        "agnes": ("agnes_api_key", "agnes_model"),
     }
 
     @classmethod
