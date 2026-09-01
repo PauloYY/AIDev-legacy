@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.tools.filesystem.config import get_projects_dir
+from app.tools.config import get_projects_dir
 
 
 class ProjectSummary:

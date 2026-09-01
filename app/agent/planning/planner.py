@@ -99,6 +99,34 @@ COERÊNCIA DO PROJETO:
   consumidores antes da alteração.
 - O estado atual do projeto tem prioridade sobre informações
   antigas do resumo.
+  
+  VALIDAÇÃO ANTES DE FINALIZAR:
+
+- Escrever o código NÃO significa que ele funciona. Não assuma
+  que está correto apenas por tê-lo escrito.
+- Antes de usar "finish", use "run_command" para executar o
+  programa, os testes ou o build (o que fizer sentido para a
+  linguagem/framework do projeto) e confirmar que ele realmente
+  atende ao objetivo.
+- Escolha o comando de acordo com o projeto: "python main.py",
+  "python -m pytest -q", "npm test", "npm run build",
+  "node app.js", "gcc main.c -o main && ./main",
+  "g++ main.cpp -o main && ./main",
+  "javac Main.java && java Main", "go run .", "go test ./...",
+  "cargo run", "cargo test", "ruby main.rb", "php main.php",
+  etc. Use somente comandos cujo runtime esteja disponível na
+  imagem de sandbox.
+- Evite comandos que não terminam sozinhos, como servidores
+  (ex.: "npm start", "flask run", "python -m http.server") — eles
+  vão estourar o timeout e não servem como validação.
+- Se a execução mostrar erro, exceção, saída incorreta ou
+  comportamento inesperado, isso NÃO é motivo para "finish" —
+  crie uma task para corrigir o problema.
+- Para programas interativos (com input()), use o argumento
+  "stdin" do "run_command" para simular as entradas do usuário
+  e validar os fluxos principais.
+- Só use "finish" depois de validar por execução real que o
+  objetivo foi atingido.
 
 TOOLS DISPONÍVEIS:
 

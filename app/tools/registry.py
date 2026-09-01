@@ -1,7 +1,14 @@
 from typing import Any
 
 from app.tools.base import Tool
-from app.tools.filesystem import TOOLS
+from app.tools.execution import TOOLS as EXECUTION_TOOLS
+from app.tools.filesystem import TOOLS as FILESYSTEM_TOOLS
+
+
+DEFAULT_TOOLS = [
+    *FILESYSTEM_TOOLS,
+    *EXECUTION_TOOLS,
+]
 
 
 class ToolRegistry:
@@ -12,7 +19,7 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def load_defaults(self):
-        for tool in TOOLS:
+        for tool in DEFAULT_TOOLS:
             self.register(tool)
 
     @property

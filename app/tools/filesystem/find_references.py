@@ -1,5 +1,5 @@
 from app.tools.base import Tool, ToolType
-from app.tools.filesystem.config import get_projects_dir
+from app.tools.config import get_projects_dir
 
 
 IGNORED_DIRECTORIES = {

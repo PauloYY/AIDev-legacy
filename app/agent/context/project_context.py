@@ -1,6 +1,6 @@
 from app.agent.context.project_analyzer import ProjectAnalyzer
 from app.agent.context.project_summary import ProjectSummary
-from app.tools.filesystem.config import get_projects_dir
+from app.tools.config import get_projects_dir
 from app.tools.registry import ToolRegistry
 
 

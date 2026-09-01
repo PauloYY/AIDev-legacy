@@ -27,6 +27,9 @@ from app.llm.providers.groq import GroqProvider
 from app.llm.providers.openrouter import OpenRouterProvider
 from app.llm.router import LLMRouter
 
+from app.tools.execution import sandbox
+from app.tools.registry import ToolRegistry
+
 from app.tools.registry import ToolRegistry
 
 
@@ -93,6 +96,18 @@ def main(argv: list[str] | None = None) -> int:
         "Providers configurados: %s",
         ", ".join(getattr(p, "name", type(p).__name__) for p in providers),
     )
+
+    if Config.sandbox_mode == "docker":
+        available, reason = sandbox.sandbox_available()
+
+        if not available:
+            print(f"\n* Sandbox Docker indisponível:\n{reason}")
+            return 1
+
+        logger.info(
+            "Sandbox Docker OK (imagem: %s).",
+            Config.sandbox_docker_image,
+        )
 
     tools = ToolRegistry()
     tools.load_defaults()

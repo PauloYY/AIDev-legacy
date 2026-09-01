@@ -27,6 +27,14 @@ class Config:
     rate_limit_base_wait_seconds = float(os.getenv("AIDEV_RATE_LIMIT_BASE_WAIT_SECONDS", "10"))
     rate_limit_max_wait_seconds = float(os.getenv("AIDEV_RATE_LIMIT_MAX_WAIT_SECONDS", "90"))
 
+    execution_timeout_seconds = int(os.getenv("AIDEV_EXECUTION_TIMEOUT_SECONDS", "15"))
+
+    sandbox_mode = os.getenv("AIDEV_SANDBOX_MODE", "docker").lower()
+    sandbox_docker_image = os.getenv("AIDEV_SANDBOX_DOCKER_IMAGE", "aidev-sandbox:latest")
+    sandbox_memory_limit = os.getenv("AIDEV_SANDBOX_MEMORY_LIMIT", "256m")
+    sandbox_cpu_limit = os.getenv("AIDEV_SANDBOX_CPU_LIMIT", "1")
+    sandbox_pids_limit = os.getenv("AIDEV_SANDBOX_PIDS_LIMIT", "128")
+
     # Nome -> (api_key, model) usado por Config.available_providers().
     _PROVIDER_FIELDS = {
         "groq": ("groq_api_key", "groq_model"),
