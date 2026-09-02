@@ -75,6 +75,12 @@ REGRAS:
 - Uma task representa uma única ação.
 - Dependencies são usadas para obter informações antes da task.
 - Dependencies podem usar somente ferramentas de análise.
+- Para argumentos de conteúdo extenso (ex.: "content" de
+  write_file), NÃO escreva o conteúdo final aqui — descreva
+  brevemente o que deve ser feito (ex.: "implementar a classe
+  Client com os campos id, nome e status"). O EXECUTOR é quem
+  gera o conteúdo completo do arquivo, então repeti-lo aqui
+  desperdiça tokens e aumenta o risco de resposta cortada.
 
 PROGRESSO:
 
@@ -99,8 +105,8 @@ COERÊNCIA DO PROJETO:
   consumidores antes da alteração.
 - O estado atual do projeto tem prioridade sobre informações
   antigas do resumo.
-  
-  VALIDAÇÃO ANTES DE FINALIZAR:
+
+VALIDAÇÃO ANTES DE FINALIZAR:
 
 - Escrever o código NÃO significa que ele funciona. Não assuma
   que está correto apenas por tê-lo escrito.
@@ -114,8 +120,11 @@ COERÊNCIA DO PROJETO:
   "g++ main.cpp -o main && ./main",
   "javac Main.java && java Main", "go run .", "go test ./...",
   "cargo run", "cargo test", "ruby main.rb", "php main.php",
-  etc. Use somente comandos cujo runtime esteja disponível na
-  imagem de sandbox.
+  "mvn test", "gradle test", etc. Use somente comandos cujo
+  runtime esteja disponível na imagem de sandbox.
+- Para projetos Gradle, use "gradle" diretamente — NUNCA
+  "./gradlew" (o wrapper tenta baixar o Gradle pela internet, e
+  o sandbox não tem acesso à rede).
 - Evite comandos que não terminam sozinhos, como servidores
   (ex.: "npm start", "flask run", "python -m http.server") — eles
   vão estourar o timeout e não servem como validação.
@@ -141,7 +150,7 @@ FORMATO TASK:
         "arguments": {{
             "project_name": "test-project",
             "file_path": "result.py",
-            "content": "..."
+            "content": "breve descrição do que o arquivo deve conter (não o conteúdo completo)"
         }},
         "dependencies": []
     }}

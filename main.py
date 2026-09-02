@@ -6,6 +6,7 @@ from app.agent.context.project_context import ProjectContext
 from app.agent.context.project_summary import ProjectSummary
 from app.agent.context.project_summary_updater import ProjectSummaryUpdater
 from app.agent.context.task_context_builder import TaskContextBuilder
+from app.agent.context.operational_memory import OperationalMemory
 from app.agent.execution.execution_decision_parser import ExecutionDecisionParser
 from app.agent.execution.task_decision_maker import TaskDecisionMaker
 from app.agent.execution.validator import TaskValidator
@@ -139,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
 
     planner = Planner(
         llm=llm,
-        parser=DecisionParser(),
+        parser=DecisionParser(tools=tools),
         tools=tools,
     )
 
@@ -151,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     validator = TaskValidator(tools)
+    operational_memory = OperationalMemory(tools)
 
     runner = Runner(
         planner=planner,
@@ -160,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         project_context=project_context,
         project_summary_updater=summary_updater,
         validator=validator,
+        operational_memory=operational_memory,
         on_event=handle_agent_event,
         max_iterations=args.max_iterations,
     )

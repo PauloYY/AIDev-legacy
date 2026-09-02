@@ -4,6 +4,7 @@ import time
 
 import httpx
 
+from app.config import Config
 from app.exceptions import (
     LLMAPIError,
     LLMConnectionError,
@@ -76,6 +77,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 self._serialize_message(message)
                 for message in messages
             ],
+            "max_tokens": Config.llm_max_output_tokens,
         }
 
         if tools:
@@ -126,7 +128,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         Erros de aplicação (4xx/5xx retornados pela API) NÃO são
         re-tentados aqui — isso é responsabilidade do LLMRouter, que
-        decide se vale a pena trocar de provider.
+        decide se vale a pena trocar de provider ou esperar.
         """
 
         last_error: Exception | None = None

@@ -14,7 +14,10 @@ def validator():
 
 
 def test_validate_accepts_known_tool(validator):
-    task = Task(tool="write_file", arguments={"file_path": "a.py", "content": "x"})
+    task = Task(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
+    )
 
     validator.validate(task)  # não deve lançar
 

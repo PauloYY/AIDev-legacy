@@ -6,4 +6,4 @@ projects/*
 !projects/.gitkeep
 *.pyc
 aidev.log
-p.txt
+p.md

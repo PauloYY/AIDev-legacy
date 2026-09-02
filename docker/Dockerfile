@@ -22,7 +22,7 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove curl gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# C, C++, Java, Go, Rust, Ruby e PHP
+# C, C++, Java, Go, Rust, Ruby e PHP — direto dos repositórios do Debian.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -32,6 +32,23 @@ RUN apt-get update \
         cargo \
         ruby \
         php-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+
+# Maven, para builds/testes de projetos Java baseados em pom.xml.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends maven \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV GRADLE_VERSION=8.10.2
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl unzip ca-certificates \
+    && curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && ln -s "/opt/gradle-${GRADLE_VERSION}/bin/gradle" /usr/local/bin/gradle \
+    && rm /tmp/gradle.zip \
+    && apt-get purge -y --auto-remove curl unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

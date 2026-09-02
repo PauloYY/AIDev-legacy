@@ -1,6 +1,7 @@
 from typing import Any
 
 from app.tools.base import Tool
+from app.tools.analysis import TOOLS as ANALYSIS_TOOLS
 from app.tools.execution import TOOLS as EXECUTION_TOOLS
 from app.tools.filesystem import TOOLS as FILESYSTEM_TOOLS
 
@@ -8,6 +9,7 @@ from app.tools.filesystem import TOOLS as FILESYSTEM_TOOLS
 DEFAULT_TOOLS = [
     *FILESYSTEM_TOOLS,
     *EXECUTION_TOOLS,
+    *ANALYSIS_TOOLS,
 ]
 
 

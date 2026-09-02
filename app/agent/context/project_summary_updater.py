@@ -57,6 +57,11 @@ REGRAS:
 - Remova informações que comprovadamente estejam incorretas.
 - O resumo deve representar o estado atual conhecido do projeto.
 - Seja conciso.
+- Limite o resumo a no máximo 300 palavras.
+- Não liste nomes de arquivos nem a estrutura de pastas — isso já é
+  fornecido separadamente como memória operacional determinística.
+  Foque em decisões de design, regras de negócio, convenções
+  adotadas e o que ainda falta fazer.
 """
 
         response = self.llm.generate(
