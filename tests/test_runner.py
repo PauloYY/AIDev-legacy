@@ -64,6 +64,9 @@ class FakeValidator:
 
 
 class FakeProjectContext:
+    def __init__(self):
+        self.summary = FakeSummary("resumo inicial")
+
     def initialize(self, project_name):
         return "resumo inicial"
 
@@ -131,6 +134,25 @@ class FakeErrorChecklist:
         return 0
 
 
+class FakeFinalVerification:
+    def __init__(self, result=None, raise_on_verify=False):
+        self.result = result
+        self._raise = raise_on_verify
+        self.verify_calls = []
+        self._call_count = 0
+
+    def verify(self, objective, project_name, summary, tools_execute):
+        self.verify_calls.append({
+            "objective": objective,
+            "project_name": project_name,
+            "summary": summary,
+        })
+        self._call_count += 1
+        if self._raise:
+            raise RuntimeError("verificação falhou")
+        return self.result
+
+
 class FakeTaskContextBuilder:
     def build(self, task, dependency_results):
         return "task context"
@@ -194,7 +216,14 @@ def _make_runner(
     summary_updater=None,
     planner_error_memory=None,
     operational_memory=None,
+    final_verification=None,
 ):
+    if final_verification is None:
+        from app.agent.context.final_verification import FinalVerificationResult
+        final_verification = FakeFinalVerification(
+            result=FinalVerificationResult(FinalVerificationResult.OK)
+        )
+
     return Runner(
         planner=FakePlanner(decisions),
         task_decision_maker=FakeTaskDecisionMaker(executions or []),
@@ -210,6 +239,7 @@ def _make_runner(
         checklist=FakeChecklist(),
         error_checklist=FakeErrorChecklist(),
         planner_error_memory=planner_error_memory,
+        final_verification=final_verification,
     )
 
 
@@ -402,3 +432,234 @@ def test_free_pass_does_not_consume_periodic_budget():
 
     assert validator.calls == [True]
     assert memory.consumed_at == []  # passe livre não gasta o orçamento
+
+
+def test_final_verification_blocks_finish_on_problems():
+    """Se a verificação final encontrar problemas, o finish deve ser
+    bloqueado e o Planner deve receber feedback no contexto."""
+
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    # Primeiro chama retorna problemas (bloqueia), segunda chamada passa
+    call_count = [0]
+
+    class SwitchingFinalVerification(FakeFinalVerification):
+        def verify(self, objective, project_name, summary, tools_execute):
+            call_count[0] += 1
+            self.verify_calls.append({
+                "objective": objective,
+                "project_name": project_name,
+                "summary": summary,
+            })
+            if call_count[0] == 1:
+                return FinalVerificationResult(
+                    FinalVerificationResult.PROBLEMS_FOUND,
+                    "VERIFICAÇÃO FINAL:\n- problema 1",
+                )
+            return FinalVerificationResult(FinalVerificationResult.OK)
+
+    fv = SwitchingFinalVerification()
+
+    task = Task(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
+    )
+    # 1a TASK + 1a FINISH (bloqueada) + 2a FINISH (aceita)
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+        Decision(action=DecisionAction.FINISH, content="done2"),
+    ]
+    executions = [
+        ExecutionDecision(tool="write_file", arguments=task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    result = runner.run(objective="obj", project_name="p")
+
+    assert result == "done2"
+    assert len(fv.verify_calls) == 2  # rodou duas vezes (1a finish bloqueada, 2a passou)
+
+
+def test_final_verification_unavailable_allows_finish_with_warning():
+    """Quando a verificação final fica indisponível (LLM falhou), o
+    finish NÃO deve ser bloqueado — apenas um aviso é emitido."""
+
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    fv = FakeFinalVerification(
+        result=FinalVerificationResult(FinalVerificationResult.UNAVAILABLE)
+    )
+
+    task = Task(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
+    )
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+    ]
+    executions = [
+        ExecutionDecision(tool="write_file", arguments=task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    result = runner.run(objective="obj", project_name="p")
+
+    assert result == "done"
+    assert len(fv.verify_calls) == 1
+
+
+def test_final_verification_passes_allows_finish():
+    """Quando a verificação final passa, o finish é aceito normalmente."""
+
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    fv = FakeFinalVerification(
+        result=FinalVerificationResult(FinalVerificationResult.OK)
+    )
+
+    task = Task(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
+    )
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+    ]
+    executions = [
+        ExecutionDecision(tool="write_file", arguments=task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    result = runner.run(objective="obj", project_name="p")
+
+    assert result == "done"
+    assert len(fv.verify_calls) == 1
+
+
+def test_final_verification_passes_before_checklist_pending_warning():
+    """A verificação final roda ANTES do aviso de checklist pendente —
+    se houver problemas na verificação, o checklist pendente nem é
+    checado."""
+
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    events = []
+
+    def capture_event(event):
+        events.append(event.type)
+
+    # Primeiro chama retorna problemas (bloqueia), segunda chamada passa
+    call_count = [0]
+
+    class SwitchingFinalVerification(FakeFinalVerification):
+        def verify(self, objective, project_name, summary, tools_execute):
+            call_count[0] += 1
+            self.verify_calls.append({
+                "objective": objective,
+                "project_name": project_name,
+                "summary": summary,
+            })
+            if call_count[0] == 1:
+                return FinalVerificationResult(
+                    FinalVerificationResult.PROBLEMS_FOUND,
+                    "problema",
+                )
+            return FinalVerificationResult(FinalVerificationResult.OK)
+
+    fv = SwitchingFinalVerification()
+
+    class WarningChecklist(FakeChecklist):
+        @property
+        def pending_count(self):
+            return 1
+
+        @property
+        def pending_items(self):
+            return []
+
+    task = Task(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
+    )
+    # 1a FINISH (bloqueada) + 2a FINISH (passa)
+    decisions = [
+        Decision(action=DecisionAction.FINISH, content="done"),
+        Decision(action=DecisionAction.FINISH, content="done2"),
+    ]
+    executions = []
+
+    runner = _make_runner(
+        decisions,
+        executions,
+        final_verification=fv,
+    )
+    runner.on_event = capture_event
+    runner.checklist = WarningChecklist()
+
+    # Deve rodar a verificação final e bloquear, sem chegar ao aviso de checklist
+    runner.run(objective="obj", project_name="p")
+
+    assert "final_verification_start" in events
+    assert "planner_error" in events  # o erro de bloqueio do finish
+
+    # A verificação final deve rodar ANTES do aviso de checklist pendente.
+    # A primeira iteração (finish bloqueado) não chega ao checklist.
+    # A segunda iteração (finish passa) chega ao checklist — mas a
+    # verificação final já apareceu antes.
+    fv_start_idx = events.index("final_verification_start")
+    cl_idx = events.index("checklist_pending_on_finish")
+    assert fv_start_idx < cl_idx
+
+
+def test_final_verification_uses_current_objective():
+    """A verificação final deve usar o objetivo atual da run, não um
+    objetivo vazio ou antigo."""
+
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    fv = FakeFinalVerification(
+        result=FinalVerificationResult(FinalVerificationResult.OK)
+    )
+
+    task = Task(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
+    )
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+    ]
+    executions = [
+        ExecutionDecision(tool="write_file", arguments=task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    runner.run(objective="meu objetivo real", project_name="p")
+
+    assert fv.verify_calls[0]["objective"] == "meu objetivo real"
+
+
+def test_final_verification_llm_failure_does_not_crash_run():
+    """Se a verificação final lançar exceção, a run deve continuar
+    normalmente (com aviso) e o finish deve ser aceito."""
+
+    fv = FakeFinalVerification(raise_on_verify=True)
+
+    task = Task(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
+    )
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+    ]
+    executions = [
+        ExecutionDecision(tool="write_file", arguments=task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    result = runner.run(objective="obj", project_name="p")
+
+    assert result == "done"

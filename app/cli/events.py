@@ -105,3 +105,27 @@ def handle_agent_event(event: AgentEvent):
 
         if usage:
             print(f"\n{usage}")
+
+    elif event.type == "final_verification_start":
+        print("→ Verificação final do projeto...")
+
+    elif event.type == "final_verification_end":
+        status = event.data.get("status", "unknown")
+        if status == "ok":
+            print("   ✓ verificação final: ok")
+        elif status == "problems_found":
+            print("   ⚠ verificação final: problemas encontrados")
+        else:
+            print("   ⚠ verificação final: indisponível")
+
+    elif event.type == "final_verification_error":
+        print(
+            f"   ⚠ erro na verificação final: "
+            f"{event.data.get('error', 'erro desconhecido')}"
+        )
+
+    elif event.type == "final_verification_warning":
+        print(
+            f"   ⚠ aviso verificação final: "
+            f"{event.data.get('message', '')}"
+        )

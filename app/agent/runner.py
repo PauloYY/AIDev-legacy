@@ -12,6 +12,7 @@ from app.agent.context.project_summary_updater import ProjectSummaryUpdater
 from app.agent.context.operational_memory import OperationalMemory
 from app.agent.context.checklist import ProjectChecklist
 from app.agent.context.error_checklist import ErrorChecklist
+from app.agent.context.final_verification import FinalVerification
 from app.agent.context.planner_error_memory import PlannerErrorMemory
 from app.exceptions import LLMInvalidResponseError
 from app.tools.registry import ToolRegistry
@@ -56,6 +57,7 @@ class Runner:
         checklist: ProjectChecklist | None = None,
         error_checklist: ErrorChecklist | None = None,
         planner_error_memory: PlannerErrorMemory | None = None,
+        final_verification: FinalVerification | None = None,
         on_event=None,
         max_iterations: int | None = None,
     ):
@@ -75,6 +77,9 @@ class Runner:
         )
         self.planner_error_memory = (
             planner_error_memory or PlannerErrorMemory()
+        )
+        self.final_verification = (
+            final_verification or FinalVerification(planner.llm)
         )
         self.on_event = on_event
         self.max_iterations = max_iterations or self.MAX_ITERATIONS
@@ -348,6 +353,60 @@ class Runner:
 
         return None
 
+    def _run_final_verification(self, project_name: str, summary: str) -> str | None:
+        """Roda a verificação final (análise semântica/integração) antes
+        de aceitar um finish.
+
+        Esta camada checa se o objetivo foi REALMENTE atendido — não
+        só sintaxe ou testes passando, mas se o projeto como um todo
+        corresponde ao que foi pedido, sem inconsistências de integração
+        entre arquivos.
+
+        Retorna o relatório de problemas (string) se algo falhou, ou
+        None se a verificação passou, não foi configurada, ou não pôde
+        rodar (nesse último caso, NÃO bloqueia — apenas loga o aviso).
+        """
+
+        self._emit("final_verification_start")
+
+        try:
+            result = self.final_verification.verify(
+                objective=getattr(self, "_current_objective", ""),
+                project_name=project_name,
+                summary=summary,
+                tools_execute=self.tools.execute,
+            )
+        except Exception as error:
+            self._emit(
+                "final_verification_error",
+                error=str(error),
+            )
+            logger.warning(
+                "Verificação final falhou ao rodar: %s", error,
+            )
+            return None
+
+        self._emit(
+            "final_verification_end",
+            status=result.status,
+        )
+
+        if result.is_unavailable:
+            logger.warning(
+                "Verificação final indisponível (LLM falhou). "
+                "Não bloqueando o finish, mas registrando o estado degradado."
+            )
+            self._emit(
+                "final_verification_warning",
+                message="Verificação final indisponível — LLM falhou ou retornou JSON inválido.",
+            )
+            return None
+
+        if result.is_problems:
+            return result.report
+
+        return None
+
     def run(
         self,
         objective: str,
@@ -355,6 +414,8 @@ class Runner:
         context: str = "",
     ):
         self._emit("agent_start")
+
+        self._current_objective = objective
 
         summary = self.project_context.initialize(
             project_name
@@ -582,6 +643,38 @@ class Runner:
                         "Corrija essas falhas e rode o teste/build de "
                         "novo, confirmando que ele passa, antes de "
                         "tentar finalizar de novo."
+                    )
+
+                    task_history.clear()
+                    stagnant_iterations = 0
+
+                    continue
+
+                current_summary = self.project_context.summary.read(
+                    project_name
+                )
+                final_check_error = self._run_final_verification(
+                    project_name, current_summary,
+                )
+
+                if final_check_error:
+                    self._emit(
+                        "planner_error",
+                        error=(
+                            "O Planner tentou finalizar, mas a "
+                            "verificação final encontrou problemas."
+                        ),
+                    )
+
+                    context = (
+                        f"{context}\n\n"
+                        f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
+                        "Você tentou finalizar, mas a verificação "
+                        "final do projeto encontrou problemas que "
+                        "precisam ser corrigidos antes:\n\n"
+                        f"{self._truncate(final_check_error)}\n\n"
+                        "Corrija os problemas acima antes de tentar "
+                        "finalizar novamente."
                     )
 
                     task_history.clear()

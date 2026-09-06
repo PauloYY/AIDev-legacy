@@ -9,6 +9,7 @@ from app.agent.context.task_context_builder import TaskContextBuilder
 from app.agent.context.operational_memory import OperationalMemory
 from app.agent.context.checklist import ProjectChecklist
 from app.agent.context.error_checklist import ErrorChecklist
+from app.agent.context.final_verification import FinalVerification
 from app.agent.execution.execution_decision_parser import ExecutionDecisionParser
 from app.agent.execution.task_decision_maker import TaskDecisionMaker
 from app.agent.execution.validator import TaskValidator
@@ -157,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     operational_memory = OperationalMemory(tools)
     checklist = ProjectChecklist(llm)
     error_checklist = ErrorChecklist(llm)
+    final_verification = FinalVerification(llm)
 
     runner = Runner(
         planner=planner,
@@ -169,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         operational_memory=operational_memory,
         checklist=checklist,
         error_checklist=error_checklist,
+        final_verification=final_verification,
         on_event=handle_agent_event,
         max_iterations=args.max_iterations,
     )
