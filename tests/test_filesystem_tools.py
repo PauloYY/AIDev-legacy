@@ -21,6 +21,45 @@ def test_write_file_creates_project_dir(projects_root):
     assert (projects_root / "new_proj" / "a.txt").read_text() == "conteudo"
 
 
+def test_write_file_rejects_new_file_breaking_convention(projects_root):
+    write_file("proj", "src/rideService.js", "1")
+    write_file("proj", "src/driverService.js", "2")
+
+    with pytest.raises(ValueError):
+        write_file("proj", "src/DriverRepository.js", "3")
+
+
+def test_write_file_accepts_new_file_matching_convention(projects_root):
+    write_file("proj", "src/rideService.js", "1")
+    write_file("proj", "src/driverService.js", "2")
+
+    write_file("proj", "src/paymentService.js", "3")
+
+    assert (projects_root / "proj" / "src" / "paymentService.js").exists()
+
+
+def test_write_file_allows_editing_existing_file_regardless_of_style(
+    projects_root,
+):
+    write_file("proj", "src/rideService.js", "1")
+    write_file("proj", "src/driverService.js", "2")
+
+    # Arquivo já existente: convenção não bloqueia edição, só criação.
+    write_file("proj", "src/rideService.js", "1 atualizado")
+
+    assert (
+        projects_root / "proj" / "src" / "rideService.js"
+    ).read_text() == "1 atualizado"
+
+
+def test_write_file_first_file_in_folder_is_never_rejected(projects_root):
+    write_file("proj", "src/repositories/DriverRepository.js", "1")
+
+    assert (
+        projects_root / "proj" / "src" / "repositories" / "DriverRepository.js"
+    ).exists()
+
+
 def test_list_files(projects_root):
     write_file("proj", "a.py", "1")
     write_file("proj", "sub/b.py", "2")

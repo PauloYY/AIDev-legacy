@@ -20,3 +20,17 @@ def _default_sandbox_mode(monkeypatch):
     """
 
     monkeypatch.setattr(Config, "sandbox_mode", "none")
+
+
+@pytest.fixture(autouse=True)
+def _default_sandbox_network_mode(monkeypatch):
+    """Isola os testes do AIDEV_SANDBOX_NETWORK_MODE real do .env local.
+
+    Sem isso, um .env com AIDEV_SANDBOX_NETWORK_MODE=restricted (ex.:
+    configurado para uso real do agente) vazaria pros testes que não
+    mexem explicitamente nesse valor, fazendo-os assumir o modo restrito
+    por engano. Testes que precisam validar o modo restrito devem
+    sobrescrever isso explicitamente (veja tests/test_sandbox.py).
+    """
+
+    monkeypatch.setattr(Config, "sandbox_network_mode", "none")

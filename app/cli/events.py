@@ -81,7 +81,10 @@ def handle_agent_event(event: AgentEvent):
             )
 
     elif event.type == "tool_end":
-        print("   ✓ concluído")
+        if event.data.get("success", True):
+            print("   ✓ concluído")
+        else:
+            print("   ✗ concluído, mas retornou erro (veja o resultado)")
 
     elif event.type == "tool_error":
         print(

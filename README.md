@@ -135,6 +135,38 @@ Somente providers com **API key e modelo** configurados são usados. Se
 nenhum estiver completo, o programa informa exatamente o que falta antes de
 fazer qualquer chamada de rede.
 
+### Rede do sandbox
+
+Por padrão (`AIDEV_SANDBOX_NETWORK_MODE=none`), o container do sandbox roda
+**sem nenhum acesso à rede** — nem o código gerado pelo agente consegue
+fazer nenhuma chamada de rede, o que evita exfiltração de dados e downloads
+não autorizados. Isso também significa que comandos como `npm install` ou
+`pip install -r requirements.txt` vão falhar.
+
+Se você precisa que o agente instale dependências reais de projeto, ative o
+modo restrito em vez de abrir a rede totalmente:
+
+```
+AIDEV_SANDBOX_NETWORK_MODE=restricted
+```
+
+Nesse modo, o container do sandbox roda numa rede Docker interna (sem rota
+direta pra internet) e só alcança a rede através de um proxy Squid com uma
+allowlist de domínios (`docker/squid/squid.conf`) — hoje cobrindo npm,
+PyPI, Go modules, crates.io, Maven Central, RubyGems, Packagist e GitHub.
+Qualquer outro destino é bloqueado.
+
+Antes de usar, construa a imagem do proxy (só precisa fazer isso uma vez):
+
+```bash
+docker build -t aidev-sandbox-proxy:latest docker/squid
+```
+
+A rede e o container do proxy são criados/verificados automaticamente pelo
+próprio AIDev no startup (mesma checagem que já valida o Docker). Se
+precisar liberar mais um domínio (ex.: um registry privado), adicione uma
+linha em `docker/squid/squid.conf` e reconstrua a imagem.
+
 ## Testes
 
 ```bash

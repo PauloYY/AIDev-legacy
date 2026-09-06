@@ -1,5 +1,6 @@
 from app.tools.base import Tool, ToolType
 from app.tools.config import get_projects_dir
+from app.tools.filesystem.naming_convention import check_naming_convention
 
 
 def write_file(project_name: str, file_path: str, content: str) -> str:
@@ -19,6 +20,18 @@ def write_file(project_name: str, file_path: str, content: str) -> str:
         raise PermissionError(
             "Acesso fora do diretório do projeto não permitido."
         )
+
+    is_new_file = not target_path.exists()
+
+    if is_new_file:
+        convention_error = check_naming_convention(
+            target_path.parent,
+            target_path.suffix,
+            target_path.stem,
+        )
+
+        if convention_error:
+            raise ValueError(convention_error)
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(content, encoding="utf-8")

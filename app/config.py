@@ -40,6 +40,21 @@ class Config:
     sandbox_cpu_limit = os.getenv("AIDEV_SANDBOX_CPU_LIMIT", "1")
     sandbox_pids_limit = os.getenv("AIDEV_SANDBOX_PIDS_LIMIT", "128")
 
+    # Rede do sandbox: "none" (padrão, sem nenhum acesso à rede) ou
+    # "restricted" (acesso somente através de um proxy com allowlist de
+    # domínios — ver docker/squid/). Nunca use rede totalmente aberta
+    # aqui; se precisar de outro modo, adicione um allowlist novo em
+    # vez de remover a restrição.
+    sandbox_network_mode = os.getenv("AIDEV_SANDBOX_NETWORK_MODE", "none").lower()
+    sandbox_network_name = os.getenv("AIDEV_SANDBOX_NETWORK_NAME", "aidev-sandbox-net")
+    sandbox_proxy_container_name = os.getenv(
+        "AIDEV_SANDBOX_PROXY_CONTAINER", "aidev-sandbox-proxy"
+    )
+    sandbox_proxy_image = os.getenv(
+        "AIDEV_SANDBOX_PROXY_IMAGE", "aidev-sandbox-proxy:latest"
+    )
+    sandbox_proxy_port = int(os.getenv("AIDEV_SANDBOX_PROXY_PORT", "3128"))
+
     # Nome -> (api_key, model) usado por Config.available_providers().
     _PROVIDER_FIELDS = {
         "groq": ("groq_api_key", "groq_model"),

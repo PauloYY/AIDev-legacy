@@ -16,3 +16,4 @@ class Decision:
     task: Task | None = None
     content: str | None = None
     reason: str | None = None
+    checklist_progress: list[int] | None = None

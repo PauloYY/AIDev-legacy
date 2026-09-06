@@ -21,23 +21,28 @@ class DecisionParser:
             raise ValueError("A LLM retornou um JSON inválido.") from exc
 
         action = data.get("action")
+        checklist_progress = self._parse_checklist_progress(data)
 
         if action == "task":
-            return self._parse_task_decision(data)
+            return self._parse_task_decision(data, checklist_progress)
 
         if action == "finish":
             return Decision(
                 action=DecisionAction.FINISH,
                 content=data.get("content"),
+                checklist_progress=checklist_progress,
             )
 
         if action == "fail":
             return Decision(
                 action=DecisionAction.FAIL,
                 reason=data.get("reason"),
+                checklist_progress=checklist_progress,
             )
 
-        recovered = self._recover_task_from_tool_action(action, data)
+        recovered = self._recover_task_from_tool_action(
+            action, data, checklist_progress
+        )
 
         if recovered is not None:
             return recovered
@@ -46,10 +51,27 @@ class DecisionParser:
             f"Ação de decisão inválida: {action!r}"
         )
 
+    def _parse_checklist_progress(self, data: dict) -> list[int] | None:
+        """Extrai 'checklist_progress' (lista opcional de ids de itens
+        do checklist que a LLM considera concluídos agora). Formato
+        inválido é ignorado silenciosamente em vez de falhar a
+        decisão inteira — esse campo é um bônus, não deve travar o
+        parsing do resto."""
+
+        raw = data.get("checklist_progress")
+
+        if not isinstance(raw, list):
+            return None
+
+        ids = [item for item in raw if isinstance(item, int)]
+
+        return ids or None
+
     def _recover_task_from_tool_action(
         self,
         action,
         data: dict,
+        checklist_progress: list[int] | None,
     ) -> Decision | None:
         """Recupera decisões malformadas onde a LLM colocou o nome de
         uma tool diretamente em 'action' (ex.: {"action": "run_command",
@@ -85,9 +107,14 @@ class DecisionParser:
                 arguments=arguments,
                 dependencies=[],
             ),
+            checklist_progress=checklist_progress,
         )
 
-    def _parse_task_decision(self, data: dict) -> Decision:
+    def _parse_task_decision(
+        self,
+        data: dict,
+        checklist_progress: list[int] | None,
+    ) -> Decision:
         task_data = data.get("task")
 
         if not isinstance(task_data, dict):
@@ -112,4 +139,5 @@ class DecisionParser:
         return Decision(
             action=DecisionAction.TASK,
             task=task,
+            checklist_progress=checklist_progress,
         )

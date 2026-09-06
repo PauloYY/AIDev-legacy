@@ -104,10 +104,11 @@ class LLMRouter(LLMProvider):
                         raise
 
                     logger.warning(
-                        "Erro transitório (status=%s) em %s, "
-                        "tentando próximo provider.",
+                        "Erro transitório (status=%s) em %s: %s. "
+                        "Tentando próximo provider.",
                         error.status_code,
                         provider_name,
+                        error,
                     )
                     self._advance()
 
