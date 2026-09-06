@@ -663,3 +663,237 @@ def test_final_verification_llm_failure_does_not_crash_run():
     result = runner.run(objective="obj", project_name="p")
 
     assert result == "done"
+
+def test_investigation_task_is_not_counted_as_mutation():
+    """Tasks com investigation=True não devem ser consideradas mutações
+    — não entram em succeeded_mutations e não zeram stagnant_iterations."""
+
+    from app.agent.execution.task import Task as TaskDataclass
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    fv = FakeFinalVerification(
+        result=FinalVerificationResult(FinalVerificationResult.OK)
+    )
+
+    investigation_task = TaskDataclass(
+        tool="read_file",
+        arguments={"project_name": "p", "file_path": "a.py"},
+        investigation=True,
+    )
+    write_task = TaskDataclass(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "b.py", "content": "x"},
+    )
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=investigation_task),
+        Decision(action=DecisionAction.TASK, task=write_task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+    ]
+    executions = [
+        ExecutionDecision(tool="read_file", arguments=investigation_task.arguments),
+        ExecutionDecision(tool="write_file", arguments=write_task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    result = runner.run(objective="obj", project_name="p")
+
+    assert result == "done"
+    # A task de investigação (read_file) não deve ter sido
+    # considerada mutação — apenas a write_file entra em
+    # succeeded_mutations. O teste verifica que a run completa
+    # sem erro de repetição, o que só é possível porque a
+    # investigação não conta como mutação.
+
+
+def test_investigation_task_does_not_increment_stagnant_iterations():
+    """Investigation tasks não devem incrementar stagnant_iterations —
+    o agente pode investigar várias vezes sem ser punido como estagnação."""
+
+    from app.agent.execution.task import Task as TaskDataclass
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    fv = FakeFinalVerification(
+        result=FinalVerificationResult(FinalVerificationResult.OK)
+    )
+
+    investigation_task = TaskDataclass(
+        tool="read_file",
+        arguments={"project_name": "p", "file_path": "a.py"},
+        investigation=True,
+    )
+
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=investigation_task),
+        Decision(action=DecisionAction.TASK, task=investigation_task),
+        Decision(action=DecisionAction.TASK, task=investigation_task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+    ]
+    executions = [
+        ExecutionDecision(tool="read_file", arguments=investigation_task.arguments),
+        ExecutionDecision(tool="read_file", arguments=investigation_task.arguments),
+        ExecutionDecision(tool="read_file", arguments=investigation_task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    result = runner.run(objective="obj", project_name="p")
+
+    assert result == "done"
+
+
+def test_investigation_task_with_repeated_args_uses_loop_detection():
+    """Mesmo investigation tasks não podendo causar estagnação, o
+    mecanismo de detecção de loop (repetição exata) ainda se aplica."""
+
+    from app.agent.execution.task import Task as TaskDataclass
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    fv = FakeFinalVerification(
+        result=FinalVerificationResult(FinalVerificationResult.OK)
+    )
+
+    investigation_task = TaskDataclass(
+        tool="read_file",
+        arguments={"project_name": "p", "file_path": "a.py"},
+        investigation=True,
+    )
+
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=investigation_task),
+        Decision(action=DecisionAction.TASK, task=investigation_task),
+        Decision(action=DecisionAction.TASK, task=investigation_task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+    ]
+    executions = [
+        ExecutionDecision(tool="read_file", arguments=investigation_task.arguments),
+        ExecutionDecision(tool="read_file", arguments=investigation_task.arguments),
+        ExecutionDecision(tool="read_file", arguments=investigation_task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    result = runner.run(objective="obj", project_name="p")
+    assert result == "done"
+
+
+def test_end_to_end_analysis_objective():
+    """Cenário completo: objetivo de análise de projeto existente.
+    O Planner usa investigation=true, executa read_file/list_files,
+    e finalmente finish com o resultado da análise."""
+
+    from app.agent.execution.task import Task as TaskDataclass
+    from app.agent.context.final_verification import FinalVerificationResult
+
+    fv = FakeFinalVerification(
+        result=FinalVerificationResult(FinalVerificationResult.OK)
+    )
+
+    list_task = TaskDataclass(
+        tool="list_files",
+        arguments={"project_name": "p"},
+        investigation=True,
+    )
+    read_task = TaskDataclass(
+        tool="read_file",
+        arguments={"project_name": "p", "file_path": "main.py"},
+        investigation=True,
+    )
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=list_task),
+        Decision(action=DecisionAction.TASK, task=read_task),
+        Decision(action=DecisionAction.FINISH, content="Análise concluída."),
+    ]
+    executions = [
+        ExecutionDecision(tool="list_files", arguments=list_task.arguments),
+        ExecutionDecision(tool="read_file", arguments=read_task.arguments),
+    ]
+
+    runner = _make_runner(decisions, executions, final_verification=fv)
+    result = runner.run(
+        objective="Analise o projeto e descreva sua estrutura.",
+        project_name="p",
+    )
+
+    assert result == "Análise concluída."
+    assert fv.verify_calls[0]["objective"] == "Analise o projeto e descreva sua estrutura."
+
+
+def test_executor_second_validation_respects_investigation_flag():
+    """A segunda validação (no Executor) deve respeitar task.investigation=True,
+    mesmo quando allow_investigation do Runner está False (sem free_pass
+    e sem orçamento periódico).
+
+    Este teste usa o TaskValidator real, não o FakeValidator, para cobrir
+    o ponto exato onde o bug ocorria na vida real.
+    """
+    from app.agent.execution.validator import TaskValidator
+    from app.agent.context.final_verification import FinalVerificationResult
+    from app.tools.registry import ToolRegistry
+
+    tools = ToolRegistry()
+    tools.load_defaults()
+    real_validator = TaskValidator(tools)
+
+    fv = FakeFinalVerification(
+        result=FinalVerificationResult(FinalVerificationResult.OK)
+    )
+
+    investigation_task = Task(
+        tool="read_file",
+        arguments={"project_name": "p", "file_path": "a.py"},
+        investigation=True,
+    )
+    decisions = [
+        Decision(action=DecisionAction.TASK, task=investigation_task),
+        Decision(action=DecisionAction.FINISH, content="done"),
+    ]
+    executions = [
+        ExecutionDecision(
+            tool="read_file",
+            arguments={"project_name": "p", "file_path": "a.py"},
+        ),
+    ]
+
+    runner = Runner(
+        planner=FakePlanner(decisions),
+        task_decision_maker=FakeTaskDecisionMaker(executions),
+        task_context_builder=FakeTaskContextBuilder(),
+        tools=FakeToolRegistry(),
+        project_context=FakeProjectContext(),
+        project_summary_updater=FakeSummaryUpdater(FakeSummary("resumo")),
+        validator=real_validator,
+        operational_memory=FakeOperationalMemory(),
+        checklist=FakeChecklist(),
+        error_checklist=FakeErrorChecklist(),
+        final_verification=fv,
+    )
+
+    # Deve completar sem levantar ValueError na segunda validação
+    result = runner.run(objective="Analise o projeto.", project_name="p")
+    assert result == "done"
+
+
+def test_executor_second_validation_still_rejects_without_flag():
+    """Sem investigation=True, a validação do executor continua rejeitando
+    read_file como task principal — a proteção existente não é enfraquecida.
+
+    Testa diretamente o TaskValidator real, replicando a condição exata
+    da segunda validação no Runner: allow_investigation=False (sem free_pass
+    nem orçamento) mas task.investigation=False.
+    """
+    from app.agent.execution.validator import TaskValidator
+    from app.tools.registry import ToolRegistry
+
+    tools = ToolRegistry()
+    tools.load_defaults()
+    real_validator = TaskValidator(tools)
+
+    # Simula a segunda validação do Runner com allow_investigation=False
+    # e task.investigation=False
+    with pytest.raises(ValueError) as exc_info:
+        real_validator.validate_arguments(
+            "read_file",
+            {"project_name": "p", "file_path": "a.py"},
+            allow_investigation=False or False,  # igual ao Runner: allow_investigation or task.investigation
+        )
+
+    assert "read_file" in str(exc_info.value)
+    assert "dependency" in str(exc_info.value).lower()

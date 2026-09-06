@@ -87,6 +87,13 @@ REGRAS:
   do stack trace) antes de saber qual correção fazer. Fora desse
   caso específico, a regra acima vale normalmente — não abuse da
   exceção encadeando várias investigações soltas seguidas.
+- OUTRA EXCEÇÃO: se o seu OBJETIVO for analisar, entender ou
+  investigar um projeto existente (sem criar ou modificar código),
+  marque a task com "investigation": true. Isso permite usar
+  read_file/list_files/find_references como ação principal de forma
+  explícita. Exemplo:
+  {{"action": "task", "task": {{"tool": "read_file", "arguments": {{...}}, "investigation": true}}}}
+  Sem esse campo, a task será rejeitada pelo validador.
 - Uma task pode ter várias dependencies ao mesmo tempo — se precisa
   ler mais de um arquivo antes de agir, anexe todos de uma vez em
   vez de fazer isso em tasks separadas.
@@ -106,6 +113,11 @@ PROGRESSO:
   uma justificativa concreta.
 - Se uma ação falhou, use o erro para decidir o próximo passo.
 - Cada nova task deve produzir progresso real.
+- Tasks marcadas com "investigation": true são ações de leitura/análise
+  pura — não produzem mutação no projeto. Elas não contam como
+  estagnação nos mecanismos internos, mas o Planner não deve
+  investigar indefinidamente: após coletar informação suficiente,
+  tome uma decisão (finish, task de ação, ou fail).
 - Antes de escrever um import/require que referencia outro arquivo
   do projeto, use a tool list_symbols nesse arquivo para confirmar o
   nome exato exportado, em vez de adivinhar o nome do arquivo ou do
@@ -230,6 +242,21 @@ FORMATO TASK:
         "dependencies": []
     }},
     "checklist_progress": [1]
+}}
+
+FORMATO TASK COM INVESTIGAÇÃO (quando o objetivo é analisar/investir
+um projeto existente sem modificar nada):
+
+{{
+    "action": "task",
+    "task": {{
+        "tool": "list_files",
+        "arguments": {{
+            "project_name": "meu-projeto"
+        }},
+        "investigation": true,
+        "dependencies": []
+    }}
 }}
 
 FORMATO TASK COM DEPENDENCY (quando precisa ver algo antes de agir):

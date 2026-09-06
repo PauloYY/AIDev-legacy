@@ -8,3 +8,4 @@ class Task:
     tool: str
     arguments: dict
     dependencies: list[Dependency] = field(default_factory=list)
+    investigation: bool = False

@@ -65,3 +65,36 @@ def test_parse_unknown_action_raises(parser):
 def test_parse_task_without_task_object_raises(parser):
     with pytest.raises(ValueError):
         parser.parse(json.dumps({"action": "task"}))
+
+
+def test_parse_task_with_investigation_flag(parser):
+    content = json.dumps(
+        {
+            "action": "task",
+            "task": {
+                "tool": "read_file",
+                "arguments": {"project_name": "p", "file_path": "a.py"},
+                "investigation": True,
+                "dependencies": [],
+            },
+        }
+    )
+    decision = parser.parse(content)
+    assert decision.action == DecisionAction.TASK
+    assert decision.task.tool == "read_file"
+    assert decision.task.investigation is True
+
+
+def test_parse_task_without_investigation_flag_defaults_false(parser):
+    content = json.dumps(
+        {
+            "action": "task",
+            "task": {
+                "tool": "write_file",
+                "arguments": {"project_name": "p", "file_path": "a.py", "content": "x"},
+            },
+        }
+    )
+    decision = parser.parse(content)
+    assert decision.action == DecisionAction.TASK
+    assert decision.task.investigation is False

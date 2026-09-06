@@ -106,6 +106,7 @@ class DecisionParser:
                 tool=action,
                 arguments=arguments,
                 dependencies=[],
+                investigation=False,
             ),
             checklist_progress=checklist_progress,
         )
@@ -134,6 +135,7 @@ class DecisionParser:
             tool=task_data["tool"],
             arguments=task_data.get("arguments", {}),
             dependencies=dependencies,
+            investigation=task_data.get("investigation", False),
         )
 
         return Decision(

@@ -715,7 +715,8 @@ class Runner:
                 )
 
             task = decision.task
-            stagnant_iterations += 1
+            if not task.investigation:
+                stagnant_iterations += 1
 
             if used_investigation_budget:
                 self.operational_memory.consume_investigation_budget(
@@ -740,7 +741,7 @@ class Runner:
                         "O agente está apenas lendo arquivos e rodando "
                         "comandos de verificação repetidamente, sem "
                         "escrever nenhuma mudança nova. Pare de investigar "
-                        "e faça a próxima alteração de código necessária, "
+                        "e faça a próxima ação de fato necessária, "
                         "ou use finish/fail se não for possível avançar."
                     )
                 else:
@@ -915,7 +916,7 @@ class Runner:
                     self.validator.validate_arguments(
                         execution.tool,
                         execution.arguments,
-                        allow_investigation=allow_investigation,
+                        allow_investigation=allow_investigation or task.investigation,
                     )
 
                 except ValueError as error:

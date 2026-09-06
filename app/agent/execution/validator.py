@@ -26,7 +26,7 @@ class TaskValidator:
         self.validate_arguments(
             task.tool,
             task.arguments,
-            allow_investigation=allow_investigation,
+            allow_investigation=allow_investigation or task.investigation,
         )
 
         for dependency in task.dependencies:
@@ -69,7 +69,12 @@ class TaskValidator:
                 "lido), em vez de criar uma task só para investigar. "
                 "Exceção: logo após um run_command de teste/build que "
                 "falhou, você pode usá-la sozinha para investigar o "
-                "que quebrou."
+                "que quebrou. Outra exceção: se o seu objetivo for "
+                "analisar ou investigar um projeto existente (sem "
+                "criar ou modificar nada), marque a task com "
+                '"investigation": true'
+                " — isso permite usar read_file/list_files/find_references "
+                "como ação principal de forma explícita."
             )
 
         self.schema_validator.validate(tool, arguments)

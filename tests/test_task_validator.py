@@ -99,3 +99,49 @@ def test_validate_accepts_check_project_and_run_command_as_main_task(validator):
             arguments={"project_name": "p", "command": "npm test"},
         )
     )
+
+
+@pytest.mark.parametrize(
+    "tool_name,arguments",
+    [
+        ("read_file", {"project_name": "p", "file_path": "a.py"}),
+        ("list_files", {"project_name": "p"}),
+        ("find_references", {"project_name": "p", "symbol": "foo"}),
+    ],
+)
+def test_validate_accepts_investigation_tool_with_investigation_flag(
+    validator, tool_name, arguments
+):
+    task = Task(tool=tool_name, arguments=arguments, investigation=True)
+    validator.validate(task)  # não deve lançar
+
+
+def test_validate_rejects_investigation_tool_without_flag():
+    """Uma task com read_file e investigation=False (ou omitido) deve
+    continuar sendo rejeitada — a proteção existente não é removida."""
+    tools = ToolRegistry()
+    tools.load_defaults()
+    validator = TaskValidator(tools)
+
+    task = Task(
+        tool="read_file",
+        arguments={"project_name": "p", "file_path": "a.py"},
+        investigation=False,
+    )
+
+    with pytest.raises(ValueError):
+        validator.validate(task)
+
+
+def test_validate_investigation_flag_does_not_affect_non_investigation_tools(
+    validator,
+):
+    """O flag investigation só libera DEPENDENCY_ONLY_TOOLS. Tools de
+    execução (write_file, run_command) continuam funcionando normalmente
+    mesmo sem o flag."""
+    task = Task(
+        tool="write_file",
+        arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
+        investigation=True,
+    )
+    validator.validate(task)  # não deve lançar
