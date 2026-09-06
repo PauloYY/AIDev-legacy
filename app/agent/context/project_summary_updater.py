@@ -70,7 +70,8 @@ REGRAS:
                     role="user",
                     content=prompt,
                 )
-            ]
+            ],
+            component="ProjectSummaryUpdater",
         )
 
         updated_summary = response.content.strip()

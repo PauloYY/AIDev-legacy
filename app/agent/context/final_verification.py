@@ -77,7 +77,8 @@ class FinalVerification:
 
         try:
             response = self.llm.generate(
-                messages=[Message(role="user", content=prompt)]
+                messages=[Message(role="user", content=prompt)],
+                component="FinalVerification",
             )
         except Exception as error:
             logger.warning(

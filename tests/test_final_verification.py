@@ -12,7 +12,7 @@ class FakeLLM:
         self._raise = raise_on_generate
         self.call_count = 0
 
-    def generate(self, messages):
+    def generate(self, messages, tools=None, component=None, iteration=None):
         self.call_count += 1
         if self._raise:
             raise RuntimeError("LLM indisponível")

@@ -13,6 +13,8 @@ class LLMClient:
         self,
         messages: list[Message],
         tools: list[dict] | None = None,
+        component: str | None = None,
+        iteration: int | None = None,
     ) -> LLMResponse:
 
         response = self.provider.generate(
@@ -20,6 +22,18 @@ class LLMClient:
             tools,
         )
 
-        self.usage.record(response.usage, response.provider)
+        prompt_text = ""
+        for msg in messages:
+            if msg.content:
+                prompt_text += msg.content
+
+        self.usage.record(
+            response.usage,
+            response.provider,
+            component=component,
+            iteration=iteration,
+            prompt_chars=len(prompt_text),
+            completion_chars=len(response.content or ""),
+        )
 
         return response

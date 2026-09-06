@@ -484,6 +484,7 @@ class Runner:
                             if planner_retry_context
                             else context
                         ),
+                        iteration=iteration,
                     )
 
                     if decision.action == DecisionAction.TASK:
@@ -699,6 +700,7 @@ class Runner:
                 self._emit(
                     "agent_done",
                     usage=self.planner.llm.usage.summary(),
+                    usage_breakdown=self.planner.llm.usage.breakdown(),
                 )
                 return decision.content
 
@@ -861,6 +863,7 @@ class Runner:
                         objective=objective,
                         task=task,
                         context=task_context,
+                        iteration=iteration,
                     )
 
                 except (ValueError, LLMInvalidResponseError) as error:

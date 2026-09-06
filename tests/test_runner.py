@@ -10,9 +10,15 @@ class FakeUsage:
     def summary(self):
         return "usage summary"
 
+    def breakdown(self):
+        return "usage breakdown"
+
 
 class FakeLLM:
     usage = FakeUsage()
+
+    def generate(self, messages, tools=None, component=None, iteration=None):
+        return MagicMock(content="ok")
 
 
 class FakePlanner:
@@ -21,7 +27,7 @@ class FakePlanner:
         self.llm = FakeLLM()
         self.received_contexts = []
 
-    def plan(self, objective, context):
+    def plan(self, objective, context, iteration=None):
         self.received_contexts.append(context)
         item = self._decisions.pop(0)
 
@@ -35,7 +41,7 @@ class FakeTaskDecisionMaker:
     def __init__(self, executions):
         self._executions = list(executions)
 
-    def decide(self, objective, task, context):
+    def decide(self, objective, task, context, iteration=None):
         return self._executions.pop(0)
 
 

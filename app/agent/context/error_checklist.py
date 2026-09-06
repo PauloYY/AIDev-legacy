@@ -84,7 +84,8 @@ REGRAS:
 """
 
         response = self.llm.generate(
-            messages=[Message(role="user", content=prompt)]
+            messages=[Message(role="user", content=prompt)],
+            component="ErrorChecklist",
         )
 
         data = parse_json_object(response.content)

@@ -23,6 +23,7 @@ class Planner:
         self,
         objective: str,
         context: str = "",
+        iteration: int | None = None,
     ) -> Decision:
 
         prompt = self._build_prompt(
@@ -36,7 +37,9 @@ class Planner:
                     role="user",
                     content=prompt,
                 )
-            ]
+            ],
+            component="Planner",
+            iteration=iteration,
         )
 
         if response.tool_calls:

@@ -21,6 +21,7 @@ class TaskDecisionMaker:
         objective: str,
         task: Task,
         context: str,
+        iteration: int | None = None,
     ) -> ExecutionDecision:
 
         prompt = f"""
@@ -70,7 +71,9 @@ Retorne SOMENTE o JSON.
                     role="user",
                     content=prompt,
                 )
-            ]
+            ],
+            component="TaskDecisionMaker",
+            iteration=iteration,
         )
 
         if response.tool_calls:

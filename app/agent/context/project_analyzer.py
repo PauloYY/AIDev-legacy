@@ -24,7 +24,8 @@ class ProjectAnalyzer:
                     role="user",
                     content=prompt,
                 )
-            ]
+            ],
+            component="ProjectAnalyzer",
         )
 
         return response.content
