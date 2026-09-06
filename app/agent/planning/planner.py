@@ -18,6 +18,8 @@ class Planner:
         self.llm = llm
         self.parser = parser
         self.tools = tools
+        self._cached_tools_context: str | None = None
+        self._cached_tools_names: tuple[str, ...] = ()
 
     def plan(
         self,
@@ -328,8 +330,20 @@ Retorne SOMENTE o JSON.
 """
 
     def _build_tools_context(self) -> str:
-        return json.dumps(
+        names = tuple(sorted(self.tools._tools.keys()))
+
+        if (
+            self._cached_tools_context is not None
+            and self._cached_tools_names == names
+        ):
+            return self._cached_tools_context
+
+        result = json.dumps(
             self.tools.definitions,
             indent=2,
             ensure_ascii=False,
         )
+
+        self._cached_tools_context = result
+        self._cached_tools_names = names
+        return result
