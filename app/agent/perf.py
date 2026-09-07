@@ -21,6 +21,14 @@ class AgentStats:
     test_passed: int = 0
     test_failed: int = 0
     wall_ms: float = 0.0
+    # Etapa 3 (paralelismo): batches de operações independentes.
+    # parallel_ops = nº de operações que rodaram em batch;
+    # sequential_ops = nº que rodaram pelo caminho sequencial;
+    # parallel_saved_ms = soma(durações) − parede, por batch (estimativa).
+    parallel_batches: int = 0
+    parallel_ops: int = 0
+    sequential_ops: int = 0
+    parallel_saved_ms: float = 0.0
 
 
 def _llm_latency(records: list) -> tuple[float, float]:
@@ -95,6 +103,12 @@ def format_performance_summary(
         f"  Runs: {agent.test_runs}",
         f"  Passed: {agent.test_passed}",
         f"  Failed: {agent.test_failed}",
+        "",
+        "Parallel:",
+        f"  Batches: {agent.parallel_batches}",
+        f"  Parallel ops: {agent.parallel_ops}",
+        f"  Sequential ops: {agent.sequential_ops}",
+        f"  Est. saved: {agent.parallel_saved_ms / 1000:.2f}s",
     ]
 
     return "\n".join(lines)

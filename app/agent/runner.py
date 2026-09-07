@@ -4,6 +4,11 @@ from collections import deque
 
 from app.agent.events import AgentEvent
 from app.agent.execution.validator import TaskValidator
+from app.agent.parallel import (
+    all_pure_read,
+    estimated_saved_ms,
+    run_concurrent,
+)
 from app.agent.perf import AgentStats, format_performance_summary
 from app.agent.planning.decision import DecisionAction
 from app.agent.planning.planner import Planner
@@ -28,6 +33,7 @@ from app.agent.trace import (
     truncate_text,
 )
 from app.exceptions import LLMInvalidResponseError
+from app.config import Config
 from app.tools.registry import ToolRegistry
 
 
@@ -361,6 +367,35 @@ class Runner:
             return first_line.startswith("STATUS: sucesso")
 
         return True
+
+    def _execute_dependency(self, dependency):
+        """Executa UMA dependency, capturando erro.
+
+        Retorna (result, succeeded, error_or_None) — exatamente a
+        mesma semântica do loop sequencial legado: exceção da tool
+        vira string "ERRO NA DEPENDENCY" + succeeded=False; comando
+        com exit code != 0 é succeeded=False SEM exceção. Usado tanto
+        pelo caminho sequencial quanto pelo batch paralelo (Etapa 3).
+        """
+
+        try:
+            result = self.tools.execute(
+                dependency.tool,
+                dependency.arguments,
+            )
+        except Exception as error:
+            return (
+                f"ERRO NA DEPENDENCY:\n"
+                f"{type(error).__name__}: {error}",
+                False,
+                error,
+            )
+
+        return (
+            result,
+            self._command_succeeded(dependency.tool, result),
+            None,
+        )
 
     def _update_error_checklist(
         self,
@@ -1315,7 +1350,72 @@ class Runner:
 
             dependency_results = []
 
-            for dependency in task.dependencies:
+            # Etapa 3: dependencies puramente observadoras (read_file,
+            # list_files, ...) executam em paralelo — elas não alteram
+            # nada e não consomem o resultado umas das outras. Qualquer
+            # dependency fora desse conjunto (ex.: run_command, que
+            # pode mutar via shell) mantém o caminho sequencial
+            # legado. O bookkeeping abaixo continua sequencial e em
+            # ordem, então memória/eventos/trace são determinísticos.
+            deps = list(task.dependencies)
+            parallel_outcomes = None
+            if (
+                len(deps) >= 2
+                and Config.parallel_tools
+                and all_pure_read(d.tool for d in deps)
+            ):
+                try:
+                    batch, batch_wall = run_concurrent(
+                        [
+                            (lambda d=d: self._execute_dependency(d))
+                            for d in deps
+                        ]
+                    )
+                    # Recompõe (result, succeeded, error) na ordem de
+                    # entrada (determinístico).
+                    parallel_outcomes = [
+                        (
+                            item.value[0],
+                            item.value[1],
+                            item.value[2],
+                        )
+                        if item.success
+                        else (
+                            "ERRO NO BATCH PARALELO:\n"
+                            f"{type(item.error).__name__}: {item.error}",
+                            False,
+                            item.error,
+                        )
+                        for item in batch
+                    ]
+                    saved_ms = estimated_saved_ms(batch, batch_wall)
+                    stats = getattr(self, "_stats", None)
+                    if stats is not None:
+                        stats.parallel_batches += 1
+                        stats.parallel_ops += len(deps)
+                        stats.parallel_saved_ms += saved_ms
+                    trace.record(
+                        "parallel_batch",
+                        iteration=iteration,
+                        context="dependencies",
+                        size=len(deps),
+                        wall_ms=round(batch_wall, 1),
+                        saved_ms=round(saved_ms, 1),
+                    )
+                except Exception as batch_error:
+                    logger.warning(
+                        "Batch paralelo de dependencies falhou "
+                        "(usando sequencial): %s",
+                        batch_error,
+                    )
+                    parallel_outcomes = None
+
+            if parallel_outcomes is None:
+                stats = getattr(self, "_stats", None)
+                if stats is not None:
+                    stats.sequential_ops += len(deps)
+
+            for index, dependency in enumerate(deps):
 
                 self._emit(
                     "tool_start",
@@ -1324,35 +1424,27 @@ class Runner:
                     dependency=True,
                 )
 
-                try:
-                    result = self.tools.execute(
-                        dependency.tool,
-                        dependency.arguments,
+                if parallel_outcomes is not None:
+                    result, dependency_succeeded, error = (
+                        parallel_outcomes[index]
                     )
-
-                except Exception as error:
-                    result = (
-                        f"ERRO NA DEPENDENCY:\n"
-                        f"{type(error).__name__}: {error}"
-                    )
-                    dependency_succeeded = False
-
-                    self._emit(
-                        "tool_error",
-                        name=dependency.tool,
-                        error=str(error),
-                    )
-
                 else:
-                    dependency_succeeded = self._command_succeeded(
-                        dependency.tool, result
+                    result, dependency_succeeded, error = (
+                        self._execute_dependency(dependency)
                     )
 
+                if error is None:
                     self._emit(
                         "tool_end",
                         name=dependency.tool,
                         dependency=True,
                         success=dependency_succeeded,
+                    )
+                else:
+                    self._emit(
+                        "tool_error",
+                        name=dependency.tool,
+                        error=str(error),
                     )
 
                 logger.debug(

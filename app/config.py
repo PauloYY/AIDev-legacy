@@ -34,6 +34,11 @@ class Config:
 
     execution_timeout_seconds = int(os.getenv("AIDEV_EXECUTION_TIMEOUT_SECONDS", "15"))
 
+    # Paralelização de tools puramente observadoras (Etapa 3): "1"
+    # (padrão) permite executar dependencies/gather independentes em
+    # paralelo; "0" força o caminho sequencial legado (reversível).
+    parallel_tools = os.getenv("AIDEV_PARALLEL_TOOLS", "1") != "0"
+
     sandbox_mode = os.getenv("AIDEV_SANDBOX_MODE", "docker").lower()
     sandbox_docker_image = os.getenv("AIDEV_SANDBOX_DOCKER_IMAGE", "aidev-sandbox:latest")
     sandbox_memory_limit = os.getenv("AIDEV_SANDBOX_MEMORY_LIMIT", "256m")

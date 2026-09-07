@@ -1,6 +1,7 @@
 import logging
 from typing import Any
 
+from app.config import Config
 from app.llm.client import LLMClient
 from app.llm.json_extraction import parse_json_object
 from app.llm.models import Message
@@ -171,40 +172,54 @@ class FinalVerification:
         file_contents: dict[str, str] = {}
         symbols: dict[str, list[str]] = {}
 
-        for file_path in limited_files:
+        # Etapa 3: leituras independentes (read_file + list_symbols são
+        # puras) podem rodar em paralelo; a montagem dos dicts continua
+        # em ordem de arquivo (determinístico). Qualquer outro caso usa
+        # o caminho sequencial legado.
+        use_parallel = (
+            len(limited_files) > 1 and Config.parallel_tools
+        )
+        if use_parallel:
             try:
-                content_result = tools_execute(
-                    "read_file",
-                    {"project_name": project_name, "file_path": file_path},
-                )
-                if content_result:
-                    truncated = str(content_result)
-                    if len(truncated) > self.MAX_CONTEXT_CHARS:
-                        truncated = (
-                            f"{truncated[:self.MAX_CONTEXT_CHARS]}\n"
-                            f"...[truncado, {len(str(content_result)) - self.MAX_CONTEXT_CHARS} caracteres omitidos]"
-                        )
-                    file_contents[file_path] = truncated
-            except Exception:
-                pass
+                from app.agent.parallel import run_concurrent
 
-            if file_path.endswith(".py"):
-                try:
-                    sym_result = tools_execute(
-                        "list_symbols",
-                        {
-                            "project_name": project_name,
-                            "file_path": file_path,
-                        },
-                    )
-                    if sym_result:
-                        symbols[file_path] = [
-                            line.strip()
-                            for line in str(sym_result).splitlines()
-                            if line.strip()
-                        ]
-                except Exception:
-                    pass
+                batch, _wall_ms = run_concurrent(
+                    [
+                        (
+                            lambda path=file_path: self._read_one_file(
+                                project_name, path, tools_execute
+                            )
+                        )
+                        for file_path in limited_files
+                    ]
+                )
+                gathered = [
+                    item.value if item.success else (None, [])
+                    for item in batch
+                ]
+            except Exception as error:
+                logger.warning(
+                    "Verificação final: batch paralelo falhou "
+                    "(usando sequencial): %s",
+                    error,
+                )
+                use_parallel = False
+
+        if not use_parallel:
+            gathered = [
+                self._read_one_file(
+                    project_name, file_path, tools_execute
+                )
+                for file_path in limited_files
+            ]
+
+        for file_path, (content, file_symbols) in zip(
+            limited_files, gathered
+        ):
+            if content:
+                file_contents[file_path] = content
+            if file_symbols:
+                symbols[file_path] = file_symbols
 
         return {
             "files": files,
@@ -213,6 +228,58 @@ class FinalVerification:
             "file_contents": file_contents,
             "symbols": symbols,
         }
+
+    def _read_one_file(
+        self,
+        project_name: str,
+        file_path: str,
+        tools_execute,
+    ) -> tuple[str | None, list[str]]:
+        """Lê conteúdo (+símbolos p/ .py) de UM arquivo.
+
+        Mesma lógica do loop sequencial legado, extraída para reúso
+        pelo batch paralelo (Etapa 3). Falhas por arquivo retornam
+        (None, []) como antes (erros são ignorados por arquivo).
+        """
+
+        content: str | None = None
+        file_symbols: list[str] = []
+
+        try:
+            content_result = tools_execute(
+                "read_file",
+                {"project_name": project_name, "file_path": file_path},
+            )
+            if content_result:
+                truncated = str(content_result)
+                if len(truncated) > self.MAX_CONTEXT_CHARS:
+                    truncated = (
+                        f"{truncated[:self.MAX_CONTEXT_CHARS]}\n"
+                        f"...[truncado, {len(str(content_result)) - self.MAX_CONTEXT_CHARS} caracteres omitidos]"
+                    )
+                content = truncated
+        except Exception:
+            pass
+
+        if file_path.endswith(".py"):
+            try:
+                sym_result = tools_execute(
+                    "list_symbols",
+                    {
+                        "project_name": project_name,
+                        "file_path": file_path,
+                    },
+                )
+                if sym_result:
+                    file_symbols = [
+                        line.strip()
+                        for line in str(sym_result).splitlines()
+                        if line.strip()
+                    ]
+            except Exception:
+                pass
+
+        return content, file_symbols
 
     def _build_prompt(
         self,

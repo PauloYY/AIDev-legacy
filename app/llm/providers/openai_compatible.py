@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -66,6 +67,36 @@ class OpenAICompatibleProvider(LLMProvider):
         tools: list[dict] | None = None,
     ) -> LLMResponse:
 
+        headers, payload = self._build_request(messages, tools)
+
+        response = self._post_with_retry(headers, payload)
+
+        return self._parse_response(response)
+
+    async def generate_async(
+        self,
+        messages: list[Message],
+        tools: list[dict] | None = None,
+    ) -> LLMResponse:
+        """Variante assíncrona real (httpx.AsyncClient).
+
+        Mesma semântica do `generate` síncrono: mesmos headers/payload,
+        mesmos retries de rede, mesmo mapeamento de erros, mesmo
+        timeout. O caminho síncrono não foi alterado."""
+
+        headers, payload = self._build_request(messages, tools)
+
+        response = await self._apost_with_retry(headers, payload)
+
+        return self._parse_response(response)
+
+    def _build_request(
+        self,
+        messages: list[Message],
+        tools: list[dict] | None,
+    ) -> tuple[dict, dict]:
+        """Monta headers + payload (compartilhado sync/async)."""
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -83,7 +114,10 @@ class OpenAICompatibleProvider(LLMProvider):
         if tools:
             payload["tools"] = tools
 
-        response = self._post_with_retry(headers, payload)
+        return headers, payload
+
+    def _parse_response(self, response: httpx.Response) -> LLMResponse:
+        """Converte a resposta HTTP em LLMResponse (sync/async)."""
 
         if response.is_error:
             self._raise_for_error(response)
@@ -161,6 +195,58 @@ class OpenAICompatibleProvider(LLMProvider):
                 )
 
                 time.sleep(wait)
+
+        raise LLMConnectionError(
+            f"Falha de conexão com {self.name} após "
+            f"{self.MAX_RETRIES} tentativas: {last_error}"
+        ) from last_error
+
+    async def _apost_with_retry(
+        self,
+        headers: dict,
+        payload: dict,
+    ) -> httpx.Response:
+        """POST assíncrono com retry/backoff (espelho de `_post_with_retry`).
+
+        Mesmas regras: só Timeout/ConnectError são re-tentados (com
+        `asyncio.sleep` em vez de `time.sleep`, para não bloquear o
+        loop); erros de aplicação sobem para o LLMRouter decidir.
+        """
+
+        last_error: Exception | None = None
+
+        async with httpx.AsyncClient(
+            timeout=self.TIMEOUT_SECONDS
+        ) as client:
+            for attempt in range(1, self.MAX_RETRIES + 1):
+                try:
+                    return await client.post(
+                        self.base_url,
+                        headers=headers,
+                        json=payload,
+                    )
+
+                except (
+                    httpx.TimeoutException, httpx.ConnectError
+                ) as error:
+                    last_error = error
+
+                    if attempt >= self.MAX_RETRIES:
+                        break
+
+                    wait = self.BACKOFF_SECONDS * (2 ** (attempt - 1))
+
+                    logger.warning(
+                        "Falha de rede ao chamar %s (tentativa %d/%d): "
+                        "%s. Tentando novamente em %.1fs...",
+                        self.name,
+                        attempt,
+                        self.MAX_RETRIES,
+                        error,
+                        wait,
+                    )
+
+                    await asyncio.sleep(wait)
 
         raise LLMConnectionError(
             f"Falha de conexão com {self.name} após "

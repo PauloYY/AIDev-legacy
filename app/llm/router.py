@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -131,6 +132,98 @@ class LLMRouter(LLMProvider):
             )
 
             time.sleep(wait_seconds)
+            retry_after = None
+
+        raise LLMRateLimitError(
+            "Todos os providers falharam com erros transitórios mesmo "
+            f"após aguardar (último erro: {last_error})."
+        )
+
+    async def generate_async(
+        self,
+        messages: list[Message],
+        tools: list[dict] | None = None,
+    ) -> LLMResponse:
+        """Roteamento assíncrono (Etapa 3): espelho do `generate`.
+
+        Mesmas regras de fallback/espera, com `asyncio.sleep` em vez
+        de `time.sleep`. Chama `generate_async` dos providers (o
+        default da base roda o sync numa thread). O `generate`
+        síncrono segue intacto."""
+
+        if not self.providers:
+            raise RuntimeError("Nenhum provider disponível.")
+
+        last_error: Exception | None = None
+        retry_after: float | None = None
+
+        for wait_round in range(self.max_wait_rounds + 1):
+
+            for _ in range(len(self.providers)):
+                provider = self.providers[self.current_index]
+                provider_name = getattr(
+                    provider, "name", provider.__class__.__name__
+                )
+
+                try:
+                    return await provider.generate_async(
+                        messages,
+                        tools,
+                    )
+
+                except LLMRateLimitError as error:
+                    last_error = error
+                    retry_after = getattr(error, "retry_after", None) or retry_after
+
+                    logger.info(
+                        "Rate limit em %s, tentando próximo provider.",
+                        provider_name,
+                    )
+                    self._advance()
+
+                except LLMConnectionError as error:
+                    last_error = error
+
+                    logger.warning(
+                        "Falha de conexão com %s, tentando próximo provider.",
+                        provider_name,
+                    )
+                    self._advance()
+
+                except LLMAPIError as error:
+                    last_error = error
+
+                    if not error.is_transient:
+                        raise
+
+                    logger.warning(
+                        "Erro transitório (status=%s) em %s: %s. "
+                        "Tentando próximo provider.",
+                        error.status_code,
+                        provider_name,
+                        error,
+                    )
+                    self._advance()
+
+            if wait_round >= self.max_wait_rounds:
+                break
+
+            wait_seconds = self._compute_wait_seconds(
+                wait_round,
+                retry_after,
+            )
+
+            logger.warning(
+                "Todos os %d providers falharam com erros transitórios. "
+                "Aguardando %.0fs antes de tentar novamente "
+                "(tentativa %d/%d)...",
+                len(self.providers),
+                wait_seconds,
+                wait_round + 1,
+                self.max_wait_rounds,
+            )
+
+            await asyncio.sleep(wait_seconds)
             retry_after = None
 
         raise LLMRateLimitError(
