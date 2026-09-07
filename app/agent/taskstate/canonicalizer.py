@@ -35,6 +35,74 @@ _PT_WORDS = frozenset({
     "seu", "sua", "isso", "isto", "qual", "quando", "onde",
 })
 
+# Integração Fase 4 (PT-ASCII): verbos no imperativo/infinitivo PT.
+# Formas escolhidas para NÃO colidir com inglês comum ("test" ≠
+# "teste", "list" ≠ "liste", "remove" propositalmente ausente: "remove
+# the file" é inglês válido).
+_PT_VERBS = frozenset({
+    "crie", "criar", "faca", "faça", "fazer", "adicione", "adicionar",
+    "remova", "remover", "implemente", "implementar", "corrija",
+    "corrigir", "teste", "testar", "liste", "listar", "construa",
+    "construir", "atualize", "atualizar", "verifique", "verificar",
+    "execute", "executar", "rode", "rodar", "analise", "analisar",
+    "descreva", "descrever",
+})
+
+# Palavras funcionais PT (len ≥ 2) para combinar com verbo. "do"/"no"/
+# "as"/"se" excluídos de propósito: colidem com inglês ("do the
+# thing", "no exceptions", "as a file").
+_PT_FUNC = frozenset({
+    "que", "para", "com", "uma", "um", "de", "da", "das", "dos",
+    "em", "na", "nos", "nas", "os", "ao", "aos", "pelo", "pela",
+    "pelos", "pelas", "este", "esta", "estes", "estas", "esse",
+    "essa", "esses", "essas", "isso", "isto", "aquele", "aquela",
+    "meu", "minha", "seu", "sua", "nosso", "mais", "como", "mas",
+    "entre", "sobre", "muito", "tambem", "também", "ja", "já",
+})
+
+# Substantivos PT frequentes em prompts (apoio, len ≥ 2).
+_PT_NOUNS = frozenset({
+    "arquivo", "arquivos", "projeto", "sistema", "teste", "testes",
+    "tarefa", "tarefas", "nota", "notas", "objetivo", "gerenciador",
+    "pagina", "página", "login", "cadastro", "cliente", "clientes",
+    "api", "tela", "botao", "botão",
+})
+
+
+def _pt_words_lower(text: str) -> set[str]:
+    try:
+        return set(_WORD_RE.findall(text.lower()))
+    except Exception:
+        return set()
+
+
+def pt_ascii_evidence(text: str) -> dict[str, int]:
+    """Evidência PT-ASCII: {verbs, funcs, nouns} (distintos, len ≥ 2).
+
+    Conservador por construção: exige combinação (verbo + outro
+    token) ou repetição (≥2 verbos / ≥3 funcionais). Um token isolado
+    ("meu", "projeto") nunca dispara tradução sozinho.
+    """
+    words = {w for w in _pt_words_lower(text) if len(w) >= 2}
+    return {
+        "verbs": len(words & _PT_VERBS),
+        "funcs": len(words & _PT_FUNC),
+        "nouns": len(words & _PT_NOUNS),
+    }
+
+
+def pt_ascii_should_translate(text: str) -> bool:
+    """True com forte evidência de PT mesmo sem acentos."""
+    try:
+        ev = pt_ascii_evidence(text)
+    except Exception:
+        return False
+    if ev["verbs"] >= 2:
+        return True
+    if ev["verbs"] >= 1 and (ev["funcs"] + ev["nouns"]) >= 1:
+        return True
+    return ev["funcs"] >= 3
+
 _EN_WORDS = frozenset({
     "the", "a", "an", "and", "with", "for", "create", "build",
     "implement", "add", "list", "test", "tests", "file", "project",
@@ -66,6 +134,8 @@ def detect_language(text: str) -> str:
         return "unknown"
     if any(char in lowered for char in _PT_ACCENTS):
         return "pt"
+    if pt_ascii_should_translate(text):
+        return "pt"
     words = set(_WORD_RE.findall(lowered))
     pt_hits = len(words & _PT_WORDS)
     if pt_hits >= 2:
@@ -77,10 +147,29 @@ def detect_language(text: str) -> str:
     return "unknown"
 
 
-def needs_translation(text: str) -> bool:
-    """Só sinal forte (acentos PT) justifica a chamada LLM."""
+def pt_ascii_enabled() -> bool:
+    """Flag AIDEV_PT_ASCII_TRANSLATION (default ligado)."""
     try:
-        return any(char in text for char in _PT_ACCENTS)
+        from app.config import Config
+
+        return bool(getattr(Config, "pt_ascii_translation", True))
+    except Exception:
+        return True
+
+
+def needs_translation(text: str, allow_pt_ascii: bool | None = None) -> bool:
+    """Se a chamada LLM de tradução se justifica (integração Fase 4).
+
+    Sempre: acentos PT. PT-ASCII (verbos + funcionais, conservador)
+    somente com AIDEV_PT_ASCII_TRANSLATION=1 (`allow_pt_ascii`
+    explícito sobrepõe a flag — útil em testes). Nunca levanta.
+    """
+    try:
+        if any(char in text for char in _PT_ACCENTS):
+            return True
+        if allow_pt_ascii is None:
+            allow_pt_ascii = pt_ascii_enabled()
+        return bool(allow_pt_ascii) and pt_ascii_should_translate(text)
     except Exception:
         return False
 

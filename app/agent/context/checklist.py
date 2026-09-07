@@ -118,6 +118,18 @@ REGRAS:
         return "\n".join(lines)
 
     @property
+    def statuses(self) -> list[tuple[int, bool]]:
+        """[(id, done)] para sincronizar o TaskState.plan (Fase 4).
+
+        Só identidade + estado — as descrições continuam aqui (o
+        TaskState referencia, não copia).
+        """
+        try:
+            return [(item.id, bool(item.done)) for item in self._items]
+        except Exception:
+            return []
+
+    @property
     def pending_items(self) -> list[ChecklistItem]:
         return [item for item in self._items if not item.done]
 

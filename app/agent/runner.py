@@ -120,6 +120,8 @@ class Runner:
         self.execution_trace = execution_trace
         # Fase 4: estado estruturado da tarefa (recriado a cada run()).
         self.task_state = None
+        self._task_state_project = ""
+        self._task_state_saved_sig = None
 
     def _emit(self, event_type: str, **data):
         # Fase 3: contadores de performance (não alteram eventos).
@@ -140,12 +142,17 @@ class Runner:
 
     # ---------- Fase 4: TaskState (atualizações centralizadas) ----------
 
-    def _init_task_state(self, objective: str):
+    def _init_task_state(self, objective: str, project_name: str = ""):
         """Pipeline prompt → canonical → Interpreter → TaskState.
 
         Nunca levanta: qualquer erro (LLM, parsing) resulta num estado
         mínimo com o prompt original — a run continua no fluxo antigo.
+        Com persistência ligada, tenta recuperar o estado da MESMA
+        tarefa (task_id); tarefa diferente → arquiva o antigo e começa
+        novo (nunca apaga, nunca mistura).
         """
+        from hashlib import sha1
+
         from app.agent.taskstate.canonicalizer import PromptCanonicalizer
         from app.agent.taskstate.interpreter import TaskInterpreter
         from app.agent.taskstate.task_state import TaskState
@@ -154,32 +161,75 @@ class Runner:
             text = objective if isinstance(objective, str) else str(objective)
         except Exception:
             text = ""
-        try:
-            planner_llm = getattr(getattr(self, "planner", None),
-                                  "llm", None)
-            canon = PromptCanonicalizer(
-                llm=planner_llm).canonicalize(text)
-            interpretation = TaskInterpreter().interpret(
-                canon.canonical_prompt, canon.language)
-            return TaskState(
-                original_prompt=canon.original_prompt,
-                canonical_prompt=canon.canonical_prompt,
-                language=canon.language,
-                translation_applied=canon.translation_applied,
-                objective=(interpretation.objective
-                           or canon.canonical_prompt[:300]),
-                requirements=interpretation.requirements,
-                constraints=interpretation.constraints,
-                ambiguities=interpretation.ambiguities,
-            )
-        except Exception as error:
-            logger.warning("TaskState inicial mínimo (falha: %s)", error)
+
+        def _fresh():
             try:
-                return TaskState(original_prompt=text,
-                                 canonical_prompt=text,
-                                 objective=text[:300])
-            except Exception:
-                return None
+                planner_llm = getattr(getattr(self, "planner", None),
+                                      "llm", None)
+                canon = PromptCanonicalizer(
+                    llm=planner_llm).canonicalize(text)
+                interpretation = TaskInterpreter().interpret(
+                    canon.canonical_prompt, canon.language)
+                try:
+                    task_id = sha1(canon.canonical_prompt.encode(
+                        "utf-8")).hexdigest()[:12]
+                except Exception:
+                    task_id = ""
+                return TaskState(
+                    original_prompt=canon.original_prompt,
+                    canonical_prompt=canon.canonical_prompt,
+                    language=canon.language,
+                    translation_applied=canon.translation_applied,
+                    task_id=task_id,
+                    objective=(interpretation.objective
+                               or canon.canonical_prompt[:300]),
+                    requirements=interpretation.requirements,
+                    constraints=interpretation.constraints,
+                    ambiguities=interpretation.ambiguities,
+                )
+            except Exception as error:
+                logger.warning("TaskState inicial mínimo (falha: %s)",
+                               error)
+                try:
+                    return TaskState(original_prompt=text,
+                                     canonical_prompt=text,
+                                     objective=text[:300])
+                except Exception:
+                    return None
+
+        fresh = _fresh()
+        if fresh is None or not bool(
+                getattr(Config, "task_state_persist", False)):
+            return fresh
+        # Recuperação (integração Fase 4): mesmo task_id → adota o
+        # estado persistido (continuidade); diferente → arquiva e usa
+        # o novo. Tudo best-effort.
+        try:
+            from app.agent.taskstate.persistence import (
+                archive_task_state,
+                load_task_state,
+            )
+
+            if not project_name or not getattr(fresh, "task_id", ""):
+                return fresh
+            restored = load_task_state(project_name)
+            if restored is not None and (
+                    restored.task_id == fresh.task_id):
+                try:
+                    self._trace_or_null().record(
+                        "task_state_restore",
+                        task_id=restored.task_id,
+                        decisions=len(restored.decisions),
+                        progress=len(restored.progress),
+                    )
+                except Exception:
+                    pass
+                return restored
+            if restored is not None:
+                archive_task_state(project_name, restored.task_id)
+        except Exception as error:
+            logger.warning("TaskState restore falhou: %s", error)
+        return fresh
 
     def _note_task_decision(self, iteration, decision) -> None:
         """Planner → decisions do TaskState (compacto, sem conteúdos)."""
@@ -209,6 +259,8 @@ class Runner:
                 summary = str(text)[:200]
             state.record_decision(iteration, action, tool, file_path,
                                   summary)
+            self._save_task_state("decision")
+            self._emit_task_state_update(iteration)
         except Exception as error:
             logger.warning("TaskState decision falhou: %s", error)
 
@@ -229,19 +281,163 @@ class Runner:
                 note = ""
             state.record_progress(iteration, tool, success, file_path,
                                   note)
+            self._save_task_state("progress")
+            self._emit_task_state_update(iteration)
         except Exception as error:
             logger.warning("TaskState progress falhou: %s", error)
 
     def _note_state_verification(self, gate, passed, detail,
-                                 iteration) -> None:
+                                  iteration) -> None:
         """Finish gates → verification do TaskState."""
         try:
             state = getattr(self, "task_state", None)
             if state is None:
                 return
             state.record_verification(gate, passed, detail, iteration)
+            self._save_task_state(f"verification:{gate}")
         except Exception as error:
             logger.warning("TaskState verification falhou: %s", error)
+
+    # ---------- Fase 4 (integração): consumo e persistência ----------
+
+    def _downstream_objective(self, objective: str) -> str:
+        """Objective que Planner/Executor/checklist/summary recebem.
+
+        Com AIDEV_CANONICAL_OBJECTIVE=1: prompt canônico integral (a
+        fonte de verdade passa a ser o TaskState; o original segue
+        preservado no estado + trace + bloco TASK STATE). Com 0 (ou
+        estado ausente): original, como antes.
+        """
+        try:
+            if not bool(getattr(Config, "canonical_objective", False)):
+                return objective
+            state = getattr(self, "task_state", None)
+            canonical = getattr(state, "canonical_prompt", "") or ""
+            if canonical.strip():
+                return canonical
+        except Exception as error:
+            logger.warning("Objective canônico falhou: %s", error)
+        return objective
+
+    def _with_task_state(self, context) -> str:
+        """Injeta o bloco TASK STATE no início do contexto (Fase 4).
+
+        Com AIDEV_TASK_STATE_CONTEXT=0 ou sem estado: devolve o
+        contexto intacto. Com 1: `TASK STATE:\\n<render_compact>\\n\\n`
+        + contexto — estado semântico primeiro, evidência operacional
+        depois, sem conteúdos integrais nem duplicação do OBJECTIVE
+        (a seção OBJECTIVE do prompt já o carrega).
+        """
+        try:
+            base = context if isinstance(context, str) else str(
+                context or "")
+        except Exception:
+            return context
+        try:
+            if not bool(getattr(Config, "task_state_context", False)):
+                return base
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return base
+            block = state.render_compact(include_objective=False,
+                                         original_ref_chars=200)
+            if not block.strip():
+                return base
+            if not base.strip():
+                return f"TASK STATE:\n{block}"
+            return f"TASK STATE:\n{block}\n\n{base}"
+        except Exception as error:
+            logger.warning("Injeção do TaskState falhou: %s", error)
+            return base
+
+    def _sync_task_plan(self) -> None:
+        """Espelha o checklist em TaskState.plan (idempotente)."""
+        try:
+            if not bool(getattr(Config, "task_plan_sync", False)):
+                return
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return
+            statuses = getattr(self.checklist, "statuses", None)
+            if statuses is None:
+                return  # doubles sem checklist real: nada a espelhar
+            try:
+                blocked = (
+                    self.error_checklist.pending_count > 0)
+            except Exception:
+                blocked = False
+            started = bool(getattr(state, "decisions", None)
+                           or getattr(state, "progress", None))
+            state.sync_plan(list(statuses), blocked, started)
+        except Exception as error:
+            logger.warning("Sync do plan falhou: %s", error)
+
+    def _task_state_signature(self):
+        """Assinatura do estado p/ só persistir quando algo mudou."""
+        try:
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return None
+            return (
+                len(state.decisions), len(state.progress),
+                len(state.problems),
+                sum(1 for p in state.problems if p.resolved),
+                len(state.corrections), len(state.verification),
+                tuple((item.index, item.status) for item in state.plan),
+                state.task_id,
+            )
+        except Exception:
+            return None
+
+    def _save_task_state(self, reason: str, force: bool = False) -> None:
+        """Persiste .aidev/task_state.json (atômico, best-effort).
+
+        Com AIDEV_TASK_STATE_PERSIST=0: nada faz. Sem mudança desde o
+        último save (e sem force): nada faz. Falha → evento
+        `task_state_persist_error`, nunca exceção.
+        """
+        try:
+            if not bool(getattr(Config, "task_state_persist", False)):
+                return
+            state = getattr(self, "task_state", None)
+            project = getattr(self, "_task_state_project", "")
+            if state is None or not project:
+                return
+            sig = self._task_state_signature()
+            if not force and sig is not None and sig == getattr(
+                    self, "_task_state_saved_sig", None):
+                return
+            from app.agent.taskstate.persistence import save_task_state
+
+            result = save_task_state(state, project)
+            trace = self._trace_or_null()
+            if result.get("ok"):
+                self._task_state_saved_sig = sig
+                trace.record("task_state_persist", reason=reason,
+                             path=result.get("path"),
+                             bytes=result.get("bytes", 0))
+            else:
+                trace.record("task_state_persist_error", reason=reason,
+                             error=str(result.get("error", ""))[:200])
+        except Exception as error:
+            logger.warning("Save do TaskState falhou: %s", error)
+
+    def _emit_task_state_update(self, iteration) -> None:
+        """Evento compacto de evolução do estado (sem snapshot gigante)."""
+        try:
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return
+            summary = state.progress_summary
+            self._trace_or_null().record(
+                "task_state_update", iteration=iteration,
+                decisions=summary.get("decisions", 0),
+                progress=f"{summary.get('succeeded', 0)}/"
+                         f"{summary.get('total', 0)}",
+                open_problems=len(state.open_problems),
+            )
+        except Exception as error:
+            logger.warning("Trace update do TaskState falhou: %s", error)
 
     def _note_test_run(self, tool: str, arguments: dict, succeeded: bool) -> None:
         """Conta execuções de teste/build (Fase 3, só métrica)."""
@@ -545,6 +741,9 @@ class Runner:
             except Exception as error:
                 logger.warning("TaskState correction falhou: %s", error)
             self.error_checklist.clear()
+            # Fase 4 (integração): desbloqueio espelhado no plan.
+            self._sync_task_plan()
+            self._save_task_state("tests_green")
             return
 
         text = str(result).lstrip()
@@ -570,6 +769,8 @@ class Runner:
                         kind="infra", iteration=iteration)
             except Exception as error:
                 logger.warning("TaskState problem falhou: %s", error)
+            self._sync_task_plan()
+            self._save_task_state("infra_failure")
             return
 
         try:
@@ -593,6 +794,9 @@ class Runner:
                         kind="test_failure", iteration=iteration)
         except Exception as error:
             logger.warning("TaskState problem falhou: %s", error)
+        # Fase 4 (integração): falha espelhada no plan + persistência.
+        self._sync_task_plan()
+        self._save_task_state("test_failure")
 
     def _is_mutating(self, tool: str, arguments: dict) -> bool:
         if tool == "write_file":
@@ -1116,20 +1320,29 @@ class Runner:
         self.checklist.reset()
         self.error_checklist.reset()
         self.planner_error_memory.reset()
-        # Fase 4: pipeline prompt → canonicalização → Interpreter →
-        # TaskState. Infraestrutura inicial: o estado é construído,
-        # mantido e auditado (trace), mas NÃO é injetado nos prompts
-        # do Planner/Executor nesta fase — o fluxo atual recebe o
-        # `objective` original, como antes (migração futura).
-        self.task_state = self._init_task_state(objective)
+        # Fase 4 (integração): pipeline prompt → canonicalização →
+        # Interpreter → TaskState → Planner/Executor. O TaskState é a
+        # fonte estruturada (persistido + auditado no trace); com as
+        # flags de integração desligadas, o fluxo volta ao legado.
+        self._task_state_project = project_name
+        self._task_state_saved_sig = None
+        self.task_state = self._init_task_state(objective,
+                                                project_name)
         try:
             trace.record("task_state_init",
                          state=self.task_state.to_dict())
         except Exception as error:
             logger.warning("Trace do TaskState falhou: %s", error)
+        self._save_task_state("init", force=True)
+        # Objective downstream: canônico com AIDEV_CANONICAL_OBJECTIVE=1
+        # (-Planner/Executor/checklist/summary/verificação), original
+        # caso contrário. run_start acima já registrou o original.
+        downstream_objective = self._downstream_objective(objective)
+        self._current_objective = downstream_objective
+        self._sync_task_plan()
 
         try:
-            self.checklist.generate(objective)
+            self.checklist.generate(downstream_objective)
         except Exception as error:
             # O checklist é um auxílio, não um requisito — se a
             # geração falhar (erro de LLM, JSON malformado etc.), o
@@ -1137,6 +1350,8 @@ class Runner:
             logger.warning(
                 "Falha ao gerar checklist do objetivo: %s", error
             )
+        # Fase 4 (integração): plano inicial espelhado no TaskState.
+        self._sync_task_plan()
 
         context = (
             f"{self._build_memory_block_tracked(project_name, summary)}\n\n"
@@ -1220,14 +1435,18 @@ class Runner:
                             request_type="short_repair",
                         )
                     else:
+                        # Fase 4 (integração): objective canônico +
+                        # bloco TASK STATE antes do contexto operacional.
+                        retry_context = (
+                            f"{context}\n\n"
+                            f"{planner_retry_context}"
+                            if planner_retry_context
+                            else context
+                        )
                         decision = self.planner.plan(
-                            objective=objective,
-                            context=(
-                                f"{context}\n\n"
-                                f"{planner_retry_context}"
-                                if planner_retry_context
-                                else context
-                            ),
+                            objective=downstream_objective,
+                            context=self._with_task_state(
+                                retry_context),
                             iteration=iteration,
                             request_type=(
                                 "normal" if planner_attempts == 1
@@ -1417,15 +1636,15 @@ class Runner:
                     # prompt_chars refletir o que será enviado de fato.
                     if can_short_repair:
                         full_chars = self.planner.full_prompt_chars(
-                            objective,
-                            (
+                            downstream_objective,
+                            self._with_task_state(
                                 f"{context}\n\n{planner_retry_context}"
                                 if planner_retry_context
                                 else context
                             ),
                         )
                     else:
-                        full_chars = len(objective or "") + len(
+                        full_chars = len(downstream_objective or "") + len(
                             context or "") + len(planner_retry_context)
                     trace.record(
                         "planner_retry",
@@ -1470,6 +1689,8 @@ class Runner:
                 break
 
             marked = self.checklist.mark_done(decision.checklist_progress)
+            # Fase 4 (integração): conclusões espelhadas no plan.
+            self._sync_task_plan()
 
             if marked:
                 self._emit("checklist_updated", marked=marked)
@@ -1697,6 +1918,8 @@ class Runner:
                     else None,
                     perf_summary=perf_summary,
                 )
+                # Fase 4 (integração): estado final persistido.
+                self._save_task_state("run_end", force=True)
                 return decision.content
 
             if decision.action == DecisionAction.FAIL:
@@ -1713,6 +1936,7 @@ class Runner:
                     error_signature=truncate_text(
                         decision.reason, 500),
                 )
+                self._save_task_state("agent_fail", force=True)
                 raise RuntimeError(decision.reason)
 
             if decision.action != DecisionAction.TASK:
@@ -1962,10 +2186,12 @@ class Runner:
                 )
 
                 try:
+                    # Fase 4 (integração): TASK + TASK STATE +
+                    # resultados das dependencies (sem virar Planner).
                     execution = self.task_decision_maker.decide(
-                        objective=objective,
+                        objective=downstream_objective,
                         task=task,
-                        context=task_context,
+                        context=self._with_task_state(task_context),
                         iteration=iteration,
                     )
 
@@ -2300,7 +2526,7 @@ class Runner:
                     )
                 else:
                     summary = self.project_summary_updater.update(
-                        objective=objective,
+                        objective=downstream_objective,
                         project_name=project_name,
                         task=task,
                         result=result,

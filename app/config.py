@@ -73,6 +73,26 @@ class Config:
     #   anterior (prompt completo legado).
     compact_planner = os.getenv("AIDEV_COMPACT_PLANNER", "1") != "0"
 
+    # Fase 4 (integração) — TaskState como fonte estruturada (tudo
+    # reversível; 0 = comportamento anterior à integração):
+    # - AIDEV_TASK_STATE_CONTEXT=1 injeta TASK STATE (render_compact,
+    #   sem conteúdos integrais) no contexto do Planner e do Executor.
+    # - AIDEV_TASK_STATE_PERSIST=1 persiste .aidev/task_state.json
+    #   (atômico) e tenta recuperar na mesma tarefa (task_id).
+    # - AIDEV_CANONICAL_OBJECTIVE=1 faz o Planner/Executor/checklist/
+    #   summary/verificação usar o objective canônico (EN); o original
+    #   segue preservado no TaskState + trace.
+    # - AIDEV_PT_ASCII_TRANSLATION=1 traduz PT sem acentos com forte
+    #   evidência (verbos + palavras funcionais); 0 = só com acentos.
+    # - AIDEV_TASK_PLAN_SYNC=1 espelha o checklist em TaskState.plan
+    #   (id/status/ref, sem copiar descrições).
+    task_state_context = os.getenv("AIDEV_TASK_STATE_CONTEXT", "1") != "0"
+    task_state_persist = os.getenv("AIDEV_TASK_STATE_PERSIST", "1") != "0"
+    canonical_objective = os.getenv("AIDEV_CANONICAL_OBJECTIVE", "1") != "0"
+    pt_ascii_translation = (
+        os.getenv("AIDEV_PT_ASCII_TRANSLATION", "1") != "0")
+    task_plan_sync = os.getenv("AIDEV_TASK_PLAN_SYNC", "1") != "0"
+
     sandbox_mode = os.getenv("AIDEV_SANDBOX_MODE", "docker").lower()
     sandbox_docker_image = os.getenv("AIDEV_SANDBOX_DOCKER_IMAGE", "aidev-sandbox:latest")
     sandbox_memory_limit = os.getenv("AIDEV_SANDBOX_MEMORY_LIMIT", "256m")

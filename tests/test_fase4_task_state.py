@@ -11,6 +11,7 @@ import pytest
 
 import tests.test_runner as T
 from app.agent.context.final_verification import FinalVerificationResult
+from app.config import Config
 from app.agent.execution.execution_decision import ExecutionDecision
 from app.agent.execution.task import Task
 from app.agent.planning.decision import Decision, DecisionAction
@@ -30,6 +31,13 @@ from app.llm.models import LLMResponse, Usage
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _no_disk_persistence(monkeypatch):
+    """Isolamento: estes testes contam decisões/progresso exatos; um
+    restore de outra run (mesmo task_id "obj") os tornaria frágeis.
+    Persistência é coberta em test_fase4_integration.py com tmp_path."""
+    monkeypatch.setattr(Config, "task_state_persist", False)
 
 def _task(tool, arguments, dependencies=None):
     return Task(tool=tool, arguments=arguments,
@@ -249,10 +257,17 @@ def test_detect_language():
 
 
 def test_needs_translation_only_on_strong_signal():
+    # Integração Fase 4: acentos OU PT-ASCII com forte evidência
+    # (verbo + outro token). Token isolado nunca dispara.
     assert needs_translation("Crie um sistema válido") is True
     assert needs_translation("meu objetivo real") is False
-    assert needs_translation("Analise o projeto e descreva") is False
+    assert needs_translation("Analise o projeto e descreva",
+                             allow_pt_ascii=False) is False
     assert needs_translation("Create notes app") is False
+    assert needs_translation("crie um sistema de cadastro",
+                             allow_pt_ascii=True) is True
+    assert needs_translation("crie um sistema de cadastro",
+                             allow_pt_ascii=False) is False
 
 
 def test_english_prompt_needs_no_llm():

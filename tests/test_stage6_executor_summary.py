@@ -593,15 +593,53 @@ def test_disabling_compact_executor_restores_legacy(monkeypatch):
 
 
 def test_legacy_executor_prompt_is_byte_identical():
-    """Garantia: _build_prompt reproduz o template anterior à Etapa 6."""
-    import subprocess
-    old_src = subprocess.run(
-        ["git", "show", "HEAD:app/agent/execution/task_decision_maker.py"],
-        capture_output=True, text=True,
-        cwd="/home/paulo/Documents/vibecodas/AIDev").stdout
-    body = old_src.split('prompt = f"""', 1)[1].split('"""', 1)[0]
+    """Garantia: _build_prompt reproduz o template anterior à Etapa 6.
+
+    Template congelado inline (a versão via `git show HEAD` quebrou
+    quando o refactor foi commitado — o intent é o template, não o
+    VCS).
+    """
     task = _task("write_file", {"a": 1})
     objective, context = "OBJ", "CTX"
-    old_rendered = eval('f"""' + body + '"""')
+    expected = """
+Você é o executor de uma tarefa de desenvolvimento.
+
+Sua função é decidir como executar a task fornecida,
+utilizando as informações disponíveis no contexto.
+
+OBJETIVO:
+OBJ
+
+TASK:
+Tool: write_file
+
+ARGUMENTOS:
+{'a': 1}
+
+CONTEXTO DAS DEPENDÊNCIAS:
+CTX
+
+REGRAS:
+- Retorne SOMENTE JSON válido.
+- NÃO execute ferramentas.
+- NÃO produza tool calls.
+- Use exclusivamente a tool indicada na task.
+- Não crie novas tasks.
+- Não crie dependencies.
+- Não altere a finalidade da task.
+- Os argumentos devem ser válidos para a tool.
+- Para write_file, forneça o conteúdo completo do arquivo.
+- Para read_file, mantenha os argumentos necessários para leitura.
+
+FORMATO:
+{
+    "tool": "write_file",
+    "arguments": {
+        ...
+    }
+}
+
+Retorne SOMENTE o JSON.
+"""
     assert (TaskDecisionMaker._build_prompt(objective, task, context)
-            == old_rendered)
+            == expected)

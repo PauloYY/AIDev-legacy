@@ -66,15 +66,35 @@ class Ambiguity:
     origin: str = "interpreted"
 
 
+# Status de item de plano (ciclo de vida; ver TaskState.sync_plan).
+PLAN_STATUS_PENDING = "pending"
+PLAN_STATUS_IN_PROGRESS = "in_progress"
+PLAN_STATUS_COMPLETED = "completed"
+PLAN_STATUS_BLOCKED = "blocked"
+PLAN_STATUSES = (
+    PLAN_STATUS_PENDING,
+    PLAN_STATUS_IN_PROGRESS,
+    PLAN_STATUS_COMPLETED,
+    PLAN_STATUS_BLOCKED,
+)
+
+
 @dataclass
 class PlanItem:
-    """Item de plano (espelha progresso do checklist, sem copiar texto)."""
+    """Item de plano (espelha progresso do checklist, sem copiar texto).
+
+    Identidade estável: `index` (id numérico do checklist) + `item_id`
+    (string estável, ex. "checklist-2"). `status` é a fonte de verdade;
+    `done` espelha status == completed (compatibilidade).
+    """
 
     index: int
     done: bool = False
     # Referência curta (ex.: "checklist #2"); a descrição canônica
     # continua no ProjectChecklist.
     ref: str = ""
+    status: str = PLAN_STATUS_PENDING
+    item_id: str = ""
 
 
 @dataclass
@@ -147,6 +167,9 @@ class TaskState:
     canonical_prompt: str = ""
     language: str = "unknown"
     translation_applied: bool = False
+    # task_id: sha1 do canonical_prompt (recuperação segura: mesma
+    # tarefa → pode recuperar; tarefa diferente → estado novo).
+    task_id: str = ""
     objective: str = ""
     requirements: list[Requirement] = field(default_factory=list)
     constraints: list[TaskConstraint] = field(default_factory=list)
@@ -275,6 +298,89 @@ class TaskState:
         except Exception:
             pass
 
+    @property
+    def canonical_objective(self) -> str:
+        """Objective de trabalho derivado do prompt canônico.
+
+        É o que o Planner/Executor devem usar como objetivo principal
+        (integração Fase 4); o texto integral está em
+        `canonical_prompt` e o original do usuário em
+        `original_prompt` (nunca descartado).
+        """
+        try:
+            return self.objective or self.canonical_prompt[:300]
+        except Exception:
+            return ""
+
+    def sync_plan(
+        self,
+        items: list[tuple[int, bool]] | None,
+        blocked: bool = False,
+        started: bool = False,
+    ) -> None:
+        """Espelha o checklist em `plan` (idempotente, sem duplicar texto).
+
+        `items`: [(id, done)] do checklist (ids estáveis por run).
+        `blocked`: há pendência bloqueante (ex.: error checklist).
+        `started`: alguma decisão/execução já ocorreu.
+        Transições: pending → in_progress (primeiro pendente, após
+        início) → completed (done) ; in_progress → blocked (falha);
+        blocked → in_progress (desbloqueou) ou → completed (done).
+        Nunca levanta.
+        """
+        try:
+            if not items:
+                return
+            first_open: int | None = None
+            for item_id, done in items:
+                try:
+                    index = int(item_id)
+                except Exception:
+                    continue
+                entry = None
+                for existing in self.plan:
+                    if existing.index == index:
+                        entry = existing
+                        break
+                if entry is None:
+                    entry = PlanItem(
+                        index=index,
+                        ref=f"checklist #{index}",
+                        item_id=f"checklist-{index}",
+                    )
+                    self.plan.append(entry)
+                if done:
+                    entry.status = PLAN_STATUS_COMPLETED
+                    entry.done = True
+                else:
+                    entry.done = False
+                    if first_open is None:
+                        first_open = index
+                    if entry.status not in PLAN_STATUSES:
+                        entry.status = PLAN_STATUS_PENDING
+                    if entry.status == PLAN_STATUS_COMPLETED:
+                        entry.status = PLAN_STATUS_PENDING
+                    if blocked and (entry.status
+                                    in (PLAN_STATUS_IN_PROGRESS,
+                                        PLAN_STATUS_BLOCKED)
+                                    or index == first_open):
+                        entry.status = PLAN_STATUS_BLOCKED
+                    elif not blocked and entry.status == (
+                            PLAN_STATUS_BLOCKED):
+                        entry.status = (
+                            PLAN_STATUS_IN_PROGRESS if started
+                            else PLAN_STATUS_PENDING)
+            # Primeiro pendente vira in_progress após o início.
+            if started and not blocked and first_open is not None:
+                for entry in self.plan:
+                    if entry.index == first_open and entry.status == (
+                            PLAN_STATUS_PENDING):
+                        entry.status = PLAN_STATUS_IN_PROGRESS
+                        break
+            self.plan.sort(key=lambda entry: entry.index)
+        except Exception:
+            pass
+
     # ----- consultas -----
 
     @property
@@ -334,6 +440,7 @@ class TaskState:
                 language=str(data.get("language", "unknown")),
                 translation_applied=bool(
                     data.get("translation_applied", False)),
+                task_id=str(data.get("task_id", "")),
                 objective=str(data.get("objective", "")),
                 requirements=_items("requirements", Requirement),
                 constraints=_items("constraints", TaskConstraint),
@@ -350,19 +457,36 @@ class TaskState:
 
     # ----- renderização compacta (consumo futuro) -----
 
-    def render_compact(self) -> str:
+    def render_compact(
+        self,
+        include_objective: bool = True,
+        original_ref_chars: int = 0,
+    ) -> str:
         """Representação determinística, legível e limitada.
 
         Separa planejado (requirements/constraints/plan) de executado
         (progress/decisions) e verificado (problems resolved?,
         verification). Nunca inventa: seções vazias dizem "none".
+        `include_objective=False` evita duplicar a seção OBJECTIVE
+        quando o bloco é injetado logo após ela. `original_ref_chars`
+        anexa referência truncada ao prompt original (acesso, não
+        duplicação — o original integral segue no estado/trace).
+        Defaults preservam a saída anterior byte a byte.
         """
         try:
-            lines = [
-                f"TASK: {_safe_str(self.objective, 300) or '(empty)'}",
+            lines = []
+            if include_objective:
+                lines.append(
+                    f"TASK: {_safe_str(self.objective, 300) or '(empty)'}")
+            if original_ref_chars and self.original_prompt:
+                lines.append(
+                    "ORIGINAL: "
+                    + _safe_str(self.original_prompt,
+                                original_ref_chars))
+            lines.append(
                 f"LANGUAGE: {self.language}"
                 + (" (translated)" if self.translation_applied else ""),
-            ]
+            )
             lines.append(self._render_items(
                 "REQUIREMENTS", self.requirements,
                 lambda r: r.text))
@@ -376,8 +500,19 @@ class TaskState:
                                if a.reason else a.text)))
             if self.plan:
                 total = len(self.plan)
-                done = sum(1 for item in self.plan if item.done)
-                lines.append(f"PLAN: {done}/{total} done")
+                done = sum(1 for item in self.plan
+                           if item.status == PLAN_STATUS_COMPLETED)
+                extra = []
+                in_prog = sum(1 for item in self.plan
+                              if item.status == PLAN_STATUS_IN_PROGRESS)
+                blocked_n = sum(1 for item in self.plan
+                                if item.status == PLAN_STATUS_BLOCKED)
+                if in_prog:
+                    extra.append(f"{in_prog} in progress")
+                if blocked_n:
+                    extra.append(f"{blocked_n} blocked")
+                suffix = f" ({', '.join(extra)})" if extra else ""
+                lines.append(f"PLAN: {done}/{total} done{suffix}")
             summary = self.progress_summary
             lines.append(
                 f"PROGRESS: {summary['succeeded']}/{summary['total']} "
