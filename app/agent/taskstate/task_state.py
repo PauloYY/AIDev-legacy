@@ -121,24 +121,111 @@ class ProgressEntry:
     origin: str = "observed"
 
 
+# Status de problema (Fase 5). `resolved` (bool legado) espelha
+# status == resolved; `open` p/ gate = pending/in_progress/blocked.
+PROBLEM_STATUS_PENDING = "pending"
+PROBLEM_STATUS_IN_PROGRESS = "in_progress"
+PROBLEM_STATUS_PENDING_VERIFICATION = "pending_verification"
+PROBLEM_STATUS_RESOLVED = "resolved"
+PROBLEM_STATUS_BLOCKED = "blocked"
+PROBLEM_STATUS_INVALIDATED = "invalidated"
+PROBLEM_STATUSES = (
+    PROBLEM_STATUS_PENDING,
+    PROBLEM_STATUS_IN_PROGRESS,
+    PROBLEM_STATUS_PENDING_VERIFICATION,
+    PROBLEM_STATUS_RESOLVED,
+    PROBLEM_STATUS_BLOCKED,
+    PROBLEM_STATUS_INVALIDATED,
+)
+# Gate de retest: bloqueia enquanto houver algum destes.
+BLOCKING_PROBLEM_STATUSES = frozenset({
+    PROBLEM_STATUS_PENDING,
+    PROBLEM_STATUS_IN_PROGRESS,
+    PROBLEM_STATUS_BLOCKED,
+})
+
+
 @dataclass
 class Problem:
-    """Problema visto em execução (falha de teste/build, erro)."""
+    """Problema estruturado (Fase 5: hipótese do Analyzer + estado).
+
+    `description` resume o erro (compat Fase 4); `error` é a linha
+    observada; causa/solução são HIPÓTESES ("unknown"/"investigate"
+    quando sem evidência). `test` = identificador do teste p/ dedup
+    conservadora. `resolved` espelha status == resolved.
+    """
 
     description: str
     kind: str = "test_failure"
     iteration: int | None = None
     resolved: bool = False
     origin: str = "observed"
+    # --- Fase 5 (defaults seguros; ditados antigos carregam) ---
+    problem_id: str = ""
+    source: str = ""
+    error: str = ""
+    probable_cause: str = "unknown"
+    suggested_solution: str = "investigate"
+    affected_files: list[str] = field(default_factory=list)
+    status: str = PROBLEM_STATUS_PENDING
+    correction_id: str = ""
+    test: str = ""
+
+    def __post_init__(self):
+        try:
+            if not isinstance(self.affected_files, list):
+                self.affected_files = list(self.affected_files or [])
+        except Exception:
+            self.affected_files = []
+        try:
+            if self.status not in PROBLEM_STATUSES:
+                self.status = PROBLEM_STATUS_PENDING
+            # Compat nos dois sentidos.
+            if self.status == PROBLEM_STATUS_RESOLVED:
+                self.resolved = True
+            elif self.resolved and self.status == PROBLEM_STATUS_PENDING:
+                self.status = PROBLEM_STATUS_RESOLVED
+        except Exception:
+            pass
 
 
 @dataclass
 class Correction:
-    """Correção confirmada (só existe após evidência de resolução)."""
+    """Correção aplicada pelo Executor, vinculada a problema(s).
+
+    "applied" = Executor aplicou (NÃO significa teste verde; a
+    confirmação vem da verificação). `problem_ids` = vinculados;
+    `problem_id` = primeiro (compat).
+    """
 
     description: str
     iteration: int | None = None
     origin: str = "observed"
+    # --- Fase 5 (defaults seguros) ---
+    correction_id: str = ""
+    problem_id: str = ""
+    problem_ids: list[str] = field(default_factory=list)
+    files_changed: list[str] = field(default_factory=list)
+    status: str = "applied"
+
+    def __post_init__(self):
+        try:
+            if not isinstance(self.problem_ids, list):
+                self.problem_ids = list(self.problem_ids or [])
+            if not self.problem_id and self.problem_ids:
+                first = self.problem_ids[0]
+                self.problem_id = first if isinstance(
+                    first, str) else str(first)
+            if self.problem_id and self.problem_id not in (
+                    self.problem_ids):
+                self.problem_ids = [self.problem_id] + self.problem_ids
+        except Exception:
+            self.problem_ids = []
+        try:
+            if not isinstance(self.files_changed, list):
+                self.files_changed = list(self.files_changed or [])
+        except Exception:
+            self.files_changed = []
 
 
 @dataclass
@@ -272,12 +359,328 @@ class TaskState:
         resolved = 0
         try:
             for problem in self.problems:
-                if not problem.resolved:
+                if problem.status in BLOCKING_PROBLEM_STATUSES or (
+                        problem.status
+                        == PROBLEM_STATUS_PENDING_VERIFICATION):
+                    problem.status = PROBLEM_STATUS_RESOLVED
                     problem.resolved = True
                     resolved += 1
         except Exception:
             pass
         return resolved
+
+    # ----- Fase 5: ciclo de correção (métodos centralizados) -----
+
+    @staticmethod
+    def _problem_key(source: str, test: str,
+                     error: str) -> tuple[str, str, str]:
+        from app.agent.errors.error_analyzer import normalize_error
+
+        try:
+            src = (source if isinstance(source, str) else str(
+                source or ""))[:120]
+        except Exception:
+            src = ""
+        try:
+            tst = (test if isinstance(test, str) else str(
+                test or ""))[:200]
+        except Exception:
+            tst = ""
+        return (src, tst, normalize_error(error))
+
+    def _next_problem_id(self) -> str:
+        try:
+            return f"p{len(self.problems) + 1:03d}"
+        except Exception:
+            return "p000"
+
+    def _next_correction_id(self) -> str:
+        try:
+            return f"c{len(self.corrections) + 1:03d}"
+        except Exception:
+            return "c000"
+
+    def add_analyzed_problems(
+        self,
+        items: list | None,
+        source: str = "",
+        iteration: int | None = None,
+    ) -> tuple[list[str], list[str]]:
+        """Incorpora problemas do Analyzer (dedup conservadora).
+
+        Mesma (source, test, erro normalizado) aberta → mantém (sem
+        duplicar). Mesmo teste com erro DIFERENTE → invalida o antigo
+        e cria novo. Retorna (ids criados, ids invalidados). Nunca
+        levanta.
+        """
+        created: list[str] = []
+        invalidated: list[str] = []
+        try:
+            if not items:
+                return (created, invalidated)
+            try:
+                it = (_safe_iteration(iteration)
+                      if iteration is not None else None)
+            except Exception:
+                it = None
+            for item in list(items)[:20]:
+                try:
+                    error = getattr(item, "error", "") or ""
+                    test = getattr(item, "test", "") or ""
+                    key = self._problem_key(source, test, error)
+                    if not key[2]:
+                        continue
+                    tracked_statuses = (
+                        PROBLEM_STATUS_PENDING,
+                        PROBLEM_STATUS_IN_PROGRESS,
+                        PROBLEM_STATUS_BLOCKED,
+                        PROBLEM_STATUS_PENDING_VERIFICATION,
+                    )
+                    tracked = [
+                        p for p in self.problems
+                        if p.status in tracked_statuses
+                    ]
+                    # Re-evidência exata → mantém (reabre se aguardava).
+                    exact = [p for p in tracked
+                             if self._problem_key(
+                                 p.source, p.test, p.error) == key]
+                    if exact:
+                        for problem in exact:
+                            if problem.status == (
+                                    PROBLEM_STATUS_PENDING_VERIFICATION):
+                                problem.status = PROBLEM_STATUS_PENDING
+                                problem.correction_id = ""
+                        continue
+                    # Mesmo teste (identificado), erro diferente →
+                    # diagnóstico antigo não vale mais.
+                    if key[1]:
+                        for problem in tracked:
+                            if problem.test == key[1]:
+                                problem.status = (
+                                    PROBLEM_STATUS_INVALIDATED)
+                                if problem.problem_id:
+                                    invalidated.append(
+                                        problem.problem_id)
+                    description = _safe_str(
+                        error, self.MAX_TEXT_CHARS)
+                    problem = Problem(
+                        description=description,
+                        kind="test_failure",
+                        iteration=it,
+                        problem_id=self._next_problem_id(),
+                        source=_safe_str(source, 120),
+                        error=description,
+                        probable_cause=_safe_str(
+                            getattr(item, "probable_cause",
+                                    "unknown") or "unknown",
+                            self.MAX_TEXT_CHARS),
+                        suggested_solution=_safe_str(
+                            getattr(item, "suggested_solution",
+                                    "investigate") or "investigate",
+                            self.MAX_TEXT_CHARS),
+                        affected_files=[
+                            f for f in (
+                                getattr(item, "affected_files", None)
+                                or []) if isinstance(f, str)][:5],
+                        status=PROBLEM_STATUS_PENDING,
+                        test=_safe_str(test, 200),
+                    )
+                    self.problems.append(problem)
+                    created.append(problem.problem_id)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return (created, invalidated)
+
+    def open_tracked_problems(self) -> list:
+        """Problemas não-finais (para gate e Executor)."""
+        try:
+            return [p for p in self.problems if p.status in (
+                PROBLEM_STATUS_PENDING,
+                PROBLEM_STATUS_IN_PROGRESS,
+                PROBLEM_STATUS_BLOCKED,
+                PROBLEM_STATUS_PENDING_VERIFICATION,
+            )]
+        except Exception:
+            return []
+
+    def has_blocking_problems(self) -> bool:
+        """Há pending/in_progress/blocked? (gate de retest)."""
+        try:
+            return any(p.status in BLOCKING_PROBLEM_STATUSES
+                       for p in self.problems)
+        except Exception:
+            return False
+
+    def blocking_problem_ids(self) -> list[str]:
+        try:
+            return [p.problem_id or p.test or p.description[:40]
+                    for p in self.problems
+                    if p.status in BLOCKING_PROBLEM_STATUSES]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _files_overlap(files_changed: list,
+                       affected: list) -> bool:
+        """Interseção por basename (evidência, não adivinhação)."""
+        try:
+            changed = {str(f).replace("\\", "/").split("/")[-1]
+                       for f in files_changed or [] if f}
+            known = {str(f).replace("\\", "/").split("/")[-1]
+                     for f in affected or [] if f}
+            if not changed or not known:
+                return False
+            return bool(changed & known)
+        except Exception:
+            return False
+
+    def mark_attempt_started(
+        self,
+        files_changed: list | None,
+        iteration: int | None = None,
+    ) -> list[str]:
+        """Tentativa de correção começou → candidatos a in_progress.
+
+        Candidatos: pending/pending_verification/blocked com overlap
+        de arquivo, ou todos esses quando os arquivos são
+        desconhecidos (tentativa sem alvo identificável). Nova
+        tentativa reabre blocked. Retorna ids marcados. Nunca levanta.
+        """
+        marked: list[str] = []
+        try:
+            known_files = [f for f in (files_changed or [])
+                           if isinstance(f, str) and f]
+            for problem in self.problems:
+                if problem.status not in (
+                        PROBLEM_STATUS_PENDING,
+                        PROBLEM_STATUS_PENDING_VERIFICATION,
+                        PROBLEM_STATUS_BLOCKED):
+                    continue
+                if known_files and problem.affected_files and (
+                        not self._files_overlap(
+                            known_files, problem.affected_files)):
+                    continue
+                problem.status = PROBLEM_STATUS_IN_PROGRESS
+                marked.append(problem.problem_id or problem.test)
+        except Exception:
+            pass
+        return marked
+
+    def apply_correction(
+        self,
+        description: str,
+        files_changed: list | None,
+        iteration: int | None = None,
+    ):
+        """Registra Correction e move vinculados → pending_verification.
+
+        Vinculados: mesma regra de overlap de mark_attempt_started.
+        Retorna a Correction (ou None se nada a vincular? — cria
+        mesmo assim quando há abertos? NÃO: sem abertos, sem Correction
+        — correção sem problema conhecido é só progresso normal).
+        Nunca levanta.
+        """
+        try:
+            if description is None:
+                return None
+            text = _safe_str(description, self.MAX_TEXT_CHARS)
+            if not text.strip():
+                return None
+            known_files = [str(f)[:200] for f in (
+                files_changed or []) if f]
+            linked: list[str] = []
+            for problem in self.problems:
+                if problem.status not in (
+                        PROBLEM_STATUS_PENDING,
+                        PROBLEM_STATUS_IN_PROGRESS,
+                        PROBLEM_STATUS_BLOCKED):
+                    continue
+                if known_files and problem.affected_files and (
+                        not self._files_overlap(
+                            known_files, problem.affected_files)):
+                    continue
+                linked.append(problem.problem_id)
+            if not linked:
+                return None
+            try:
+                it = (_safe_iteration(iteration)
+                      if iteration is not None else None)
+            except Exception:
+                it = None
+            correction = Correction(
+                description=text,
+                iteration=it,
+                correction_id=self._next_correction_id(),
+                problem_id=linked[0],
+                problem_ids=list(linked),
+                files_changed=known_files,
+                status="applied",
+            )
+            self.corrections.append(correction)
+            for problem in self.problems:
+                if problem.problem_id in linked:
+                    problem.status = (
+                        PROBLEM_STATUS_PENDING_VERIFICATION)
+                    problem.correction_id = correction.correction_id
+            return correction
+        except Exception:
+            return None
+
+    def mark_attempt_failed(
+        self,
+        files_changed: list | None,
+    ) -> list[str]:
+        """Tentativa falhou (erro de tool) → in_progress vira blocked."""
+        marked: list[str] = []
+        try:
+            known_files = [f for f in (files_changed or [])
+                           if isinstance(f, str) and f]
+            for problem in self.problems:
+                if problem.status != PROBLEM_STATUS_IN_PROGRESS:
+                    continue
+                if known_files and problem.affected_files and (
+                        not self._files_overlap(
+                            known_files, problem.affected_files)):
+                    continue
+                problem.status = PROBLEM_STATUS_BLOCKED
+                marked.append(problem.problem_id or problem.test)
+        except Exception:
+            pass
+        return marked
+
+    def render_known_problems(
+        self,
+        max_items: int = 8,
+        max_chars: int = 2000,
+    ) -> str:
+        """Bloco KNOWN PROBLEMS p/ o Executor (determinístico, capped)."""
+        try:
+            tracked = self.open_tracked_problems()
+            if not tracked:
+                return ""
+            lines = ["KNOWN PROBLEMS (working hypotheses — verify "
+                     "with read_file before fixing):"]
+            for problem in tracked[:max_items]:
+                files = ", ".join(problem.affected_files[:4]) or "-"
+                lines.append(
+                    f"{problem.problem_id or '?'} [{problem.status}]\n"
+                    f"  Error: {_safe_str(problem.error, 200)}\n"
+                    f"  Probable cause: "
+                    f"{_safe_str(problem.probable_cause, 160)}\n"
+                    f"  Suggested solution: "
+                    f"{_safe_str(problem.suggested_solution, 160)}\n"
+                    f"  Files: {files}")
+            omitted = len(tracked) - min(len(tracked), max_items)
+            if omitted:
+                lines.append(f"... [+{omitted} more]")
+            text = "\n".join(lines)
+            if len(text) <= max_chars:
+                return text
+            return text[:max_chars] + "\n...[truncated]"
+        except Exception:
+            return ""
 
     def record_verification(
         self,
@@ -385,8 +788,14 @@ class TaskState:
 
     @property
     def open_problems(self) -> list[Problem]:
+        """Abertos no sentido amplo (exclui resolved/invalidated)."""
         try:
-            return [p for p in self.problems if not p.resolved]
+            return [p for p in self.problems if p.status in (
+                PROBLEM_STATUS_PENDING,
+                PROBLEM_STATUS_IN_PROGRESS,
+                PROBLEM_STATUS_BLOCKED,
+                PROBLEM_STATUS_PENDING_VERIFICATION,
+            )]
         except Exception:
             return []
 
@@ -457,10 +866,15 @@ class TaskState:
 
     # ----- renderização compacta (consumo futuro) -----
 
+    # Problemas por render no Planner (detalhe) — Executor usa
+    # KNOWN PROBLEMS + contagens (sem duplicar o detalhe).
+    MAX_RENDER_PROBLEM_DETAIL = 8
+
     def render_compact(
         self,
         include_objective: bool = True,
         original_ref_chars: int = 0,
+        problem_detail: bool = True,
     ) -> str:
         """Representação determinística, legível e limitada.
 
@@ -471,6 +885,8 @@ class TaskState:
         quando o bloco é injetado logo após ela. `original_ref_chars`
         anexa referência truncada ao prompt original (acesso, não
         duplicação — o original integral segue no estado/trace).
+        `problem_detail=False` resume problemas a contagens (p/ o
+        Executor, que recebe o detalhe via KNOWN PROBLEMS).
         Defaults preservam a saída anterior byte a byte.
         """
         try:
@@ -522,14 +938,13 @@ class TaskState:
                 lines.append(
                     f"PROBLEMS: {len(opened)} open / "
                     f"{len(self.problems)} total")
-                for problem in opened[:self.MAX_ITEMS_PER_SECTION]:
-                    lines.append(
-                        f"- [open] {_safe_str(problem.description, 120)}")
-                omitted_open = (len(opened)
-                                - min(len(opened),
-                                      self.MAX_ITEMS_PER_SECTION))
-                if omitted_open:
-                    lines.append(f"... [+{omitted_open} more]")
+                if problem_detail:
+                    shown = opened[:self.MAX_RENDER_PROBLEM_DETAIL]
+                    for problem in shown:
+                        lines.append(self._render_problem_line(problem))
+                    omitted_open = len(opened) - len(shown)
+                    if omitted_open:
+                        lines.append(f"... [+{omitted_open} more]")
             else:
                 lines.append("PROBLEMS: none")
             if self.corrections:
@@ -548,6 +963,40 @@ class TaskState:
             return "\n".join(lines)
         except Exception:
             return "TASK: (unavailable)"
+
+    @staticmethod
+    def _render_problem_line(problem) -> str:
+        """Uma linha rica por problema aberto (Fase 6, Planner).
+
+        Formato: `- [status] id descrição | files: .. | cause: .. |
+        fix: ..` — descrição primeiro (compat com parsers simples).
+        Só fatos/hipóteses do estado; nada de output bruto.
+        """
+        try:
+            ident = getattr(problem, "problem_id", "") or "?"
+            status = getattr(problem, "status", "pending") or "pending"
+            desc = _safe_str(
+                getattr(problem, "description", ""), 120)
+            parts = [f"- [{status}] {ident} {desc}".rstrip()]
+            try:
+                files = [f for f in (
+                    getattr(problem, "affected_files", None) or [])
+                    if isinstance(f, str)][:4]
+            except Exception:
+                files = []
+            if files:
+                parts.append(f"files: {', '.join(files)}")
+            cause = _safe_str(
+                getattr(problem, "probable_cause", ""), 100)
+            if cause and cause != "unknown":
+                parts.append(f"cause: {cause}")
+            fix = _safe_str(
+                getattr(problem, "suggested_solution", ""), 100)
+            if fix and fix != "investigate":
+                parts.append(f"fix: {fix}")
+            return " | ".join(parts)
+        except Exception:
+            return "- [pending] ?"
 
     def _render_items(self, title: str, items: list, pick) -> str:
         if not items:

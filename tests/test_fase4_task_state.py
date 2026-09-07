@@ -233,8 +233,9 @@ def test_render_compact_is_bounded_and_deterministic():
     out1 = state.render_compact()
     out2 = state.render_compact()
     assert out1 == out2
-    assert len(out1) < 4000
-    assert "[+20 more]" in out1  # 30 - 10 da janela
+    assert len(out1) < 6000
+    # Janela de detalhe (Fase 6): 30 - 8 por render.
+    assert "[+22 more]" in out1
 
 
 # --------------------------------------------------------------------------
@@ -582,16 +583,19 @@ def test_problems_and_corrections_from_test_cycle(tmp_path):
     checklist = ErrorChecklist(_StubLLM())
     fail = _task("run_command", {"project_name": "p",
                                  "command": "python -m pytest -q"})
+    fix = _task("write_file", {"project_name": "p",
+                               "file_path": "fix.py", "content": "x\n"})
     ok_task = _task("run_command", {"project_name": "p",
                                     "command": "python -m pytest -q"})
     tools = _FlakyTools()
     runner = Runner(
         planner=T.FakePlanner(
             [Decision(action=DecisionAction.TASK, task=fail),
+             Decision(action=DecisionAction.TASK, task=fix),
              Decision(action=DecisionAction.TASK, task=ok_task),
              _finish()]),
         task_decision_maker=T.FakeTaskDecisionMaker(
-            [_exec_for(fail), _exec_for(ok_task)]),
+            [_exec_for(fail), _exec_for(fix), _exec_for(ok_task)]),
         task_context_builder=T.FakeTaskContextBuilder(),
         tools=tools,
         project_context=T.FakeProjectContext(),
@@ -607,11 +611,16 @@ def test_problems_and_corrections_from_test_cycle(tmp_path):
     )
     assert runner.run(objective="obj", project_name="p") == "done"
     state = runner.task_state
+    # Fase 5: problema vem do Analyzer (fallback determinístico), não
+    # mais do espelho do checklist; correção do fix + nota do verde.
     assert len(state.problems) == 1
-    assert state.problems[0].description == "test_x failed"
+    assert "test_x" in state.problems[0].description
+    assert state.problems[0].status == "resolved"
     assert state.open_problems == []  # resolvido pelo teste verde
-    assert len(state.corrections) == 1
-    assert "pytest" in state.corrections[0].description
+    assert len(state.corrections) == 2
+    assert state.corrections[0].problem_id == (
+        state.problems[0].problem_id)
+    assert "pytest" in state.corrections[1].description
 
 
 def test_trace_init_event_is_valid_json(tmp_path):

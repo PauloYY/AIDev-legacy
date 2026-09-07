@@ -93,6 +93,17 @@ class Config:
         os.getenv("AIDEV_PT_ASCII_TRANSLATION", "1") != "0")
     task_plan_sync = os.getenv("AIDEV_TASK_PLAN_SYNC", "1") != "0"
 
+    # Fase 5 — análise e ciclo de correção de erros (reversível):
+    # - AIDEV_ERROR_ANALYZER=1 analisa cada resultado de teste/build
+    #   com falha UMA vez (ErrorAnalyzer, 1 LLM call; fallback
+    #   determinístico) e registra Problems estruturados no TaskState.
+    # - AIDEV_ERROR_TEST_GATE=1 bloqueia retestes (teste/build/check
+    #   de validação) enquanto houver problemas pending/in_progress/
+    #   blocked, com mensagem estruturada (nunca falha de infra).
+    #   Com 0, problemas são registrados mas retestes nunca bloqueiam.
+    error_analyzer = os.getenv("AIDEV_ERROR_ANALYZER", "1") != "0"
+    error_test_gate = os.getenv("AIDEV_ERROR_TEST_GATE", "1") != "0"
+
     sandbox_mode = os.getenv("AIDEV_SANDBOX_MODE", "docker").lower()
     sandbox_docker_image = os.getenv("AIDEV_SANDBOX_DOCKER_IMAGE", "aidev-sandbox:latest")
     sandbox_memory_limit = os.getenv("AIDEV_SANDBOX_MEMORY_LIMIT", "256m")

@@ -319,14 +319,17 @@ class Runner:
             logger.warning("Objective canônico falhou: %s", error)
         return objective
 
-    def _with_task_state(self, context) -> str:
-        """Injeta o bloco TASK STATE no início do contexto (Fase 4).
+    def _with_task_state(self, context,
+                           problem_detail: bool = True) -> str:
+        """Injeta o bloco TASK STATE no início do contexto (Fase 4/6).
 
         Com AIDEV_TASK_STATE_CONTEXT=0 ou sem estado: devolve o
         contexto intacto. Com 1: `TASK STATE:\\n<render_compact>\\n\\n`
         + contexto — estado semântico primeiro, evidência operacional
         depois, sem conteúdos integrais nem duplicação do OBJECTIVE
         (a seção OBJECTIVE do prompt já o carrega).
+        `problem_detail=False` (Executor): só contagens de problemas,
+        pois o detalhe vai via KNOWN PROBLEMS (sem duplicar).
         """
         try:
             base = context if isinstance(context, str) else str(
@@ -339,8 +342,14 @@ class Runner:
             state = getattr(self, "task_state", None)
             if state is None:
                 return base
-            block = state.render_compact(include_objective=False,
-                                         original_ref_chars=200)
+            try:
+                block = state.render_compact(
+                    include_objective=False, original_ref_chars=200,
+                    problem_detail=problem_detail)
+            except TypeError:
+                # Compat: TaskState sem o parâmetro novo.
+                block = state.render_compact(
+                    include_objective=False, original_ref_chars=200)
             if not block.strip():
                 return base
             if not base.strip():
@@ -421,6 +430,259 @@ class Runner:
                              error=str(result.get("error", ""))[:200])
         except Exception as error:
             logger.warning("Save do TaskState falhou: %s", error)
+
+    # ---------- Fase 5: test gate + ciclo de correção ----------
+
+    @staticmethod
+    def _gate_command(task) -> str:
+        """Comando/resumo p/ eventos do gate (nunca levanta)."""
+        try:
+            args = getattr(task, "arguments", None) or {}
+            if isinstance(args, dict) and args.get("command"):
+                return str(args.get("command", ""))[:200]
+            return str(getattr(task, "tool", ""))[:60]
+        except Exception:
+            return ""
+
+    def _is_gated_test_task(self, task) -> str | None:
+        """Task é retest bloqueável? Retorna rótulo ou None.
+
+        Bloqueáveis: run_command classificado teste/build (reusa
+        is_test_or_build_command, sem heurística nova) e check_project
+        como task principal (validação). Investigação (ls, cat,
+        --version, read_file solo etc.) nunca é bloqueada.
+        """
+        try:
+            if task is None:
+                return None
+            tool = getattr(task, "tool", None)
+            if tool == "check_project":
+                return "check_project"
+            if tool == "run_command":
+                args = getattr(task, "arguments", None)
+                command = ""
+                if isinstance(args, dict):
+                    command = str(args.get("command", ""))
+                if self.operational_memory.is_test_or_build_command(
+                        command):
+                    return command[:200]
+        except Exception as error:
+            logger.warning("Gate: classificação falhou: %s", error)
+        return None
+
+    def _blocking_ids(self) -> list[str]:
+        try:
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return []
+            return state.blocking_problem_ids()
+        except Exception:
+            return []
+
+    def _check_test_gate(self, task, iteration) -> str | None:
+        """Mensagem de bloqueio ou None (Fase 5).
+
+        Com AIDEV_ERROR_TEST_GATE=0: nunca bloqueia (problemas seguem
+        registrados). Caso contrário bloqueia retest com problemas
+        pending/in_progress/blocked. `test_allowed` só é emitido
+        quando há histórico de problemas (evita ruído).
+        """
+        try:
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return None
+            gated = self._is_gated_test_task(task)
+            if gated is None:
+                return None
+            if not bool(getattr(Config, "error_test_gate", False)):
+                return None
+            if not state.has_blocking_problems():
+                if state.problems or state.corrections:
+                    self._trace_or_null().record(
+                        "test_allowed", iteration=iteration,
+                        command=gated[:200],
+                        past_problems=len(state.problems),
+                        corrections=len(state.corrections),
+                    )
+                return None
+            ids = state.blocking_problem_ids()
+            listed = "\n".join(f"- {pid}" for pid in ids[:20])
+            extra = (f"\n... [+{len(ids) - 20} more]"
+                     if len(ids) > 20 else "")
+            return (
+                "TEST_BLOCKED_BY_PENDING_PROBLEMS\n"
+                "A retest/validation was requested while known problems "
+                "are still pending. Do NOT rerun tests now — fix the "
+                "known problems first (use read_file to verify each "
+                "diagnosis before editing).\n\n"
+                f"Pending problems:\n{listed}{extra}\n\n"
+                "Resolve known problems before rerunning tests."
+            )
+        except Exception as error:
+            logger.warning("Gate de teste falhou (permitindo): %s",
+                           error)
+            return None
+
+    def _known_problems_block(self) -> str:
+        """Bloco KNOWN PROBLEMS p/ o Executor (Fase 5, capped)."""
+        try:
+            if not bool(getattr(Config, "error_analyzer", False)):
+                return ""
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return ""
+            return state.render_known_problems()
+        except Exception as error:
+            logger.warning("Bloco KNOWN PROBLEMS falhou: %s", error)
+            return ""
+
+    def _attempt_files(self, tool: str, arguments: dict) -> list[str]:
+        """Arquivos-alvo conhecidos da execução (p/ vínculo)."""
+        try:
+            if tool == "write_file" and isinstance(arguments, dict):
+                path = arguments.get("file_path")
+                if isinstance(path, str) and path:
+                    return [path]
+        except Exception:
+            pass
+        return []
+
+    def _mark_correction_attempt(self, iteration, tool: str,
+                                 arguments: dict) -> None:
+        """Execução mutante começou → candidatos a in_progress."""
+        try:
+            if not self._is_mutating(tool, arguments):
+                return
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return
+            files = self._attempt_files(tool, arguments)
+            marked = state.mark_attempt_started(files, iteration)
+            if marked:
+                self._trace_or_null().record(
+                    "correction_started", iteration=iteration,
+                    tool=tool, files=files[:5], problems=marked[:20],
+                )
+        except Exception as error:
+            logger.warning("Attempt de correção falhou: %s", error)
+
+    def _note_correction_applied(self, iteration, tool: str,
+                                 arguments: dict) -> None:
+        """Execução mutante OK → Correction + pending_verification."""
+        try:
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return
+            if not self._is_mutating(tool, arguments):
+                return
+            files = self._attempt_files(tool, arguments)
+            target = files[0] if files else (
+                str(arguments.get("command", ""))[:120]
+                if isinstance(arguments, dict) else tool)
+            correction = state.apply_correction(
+                f"fix attempt: {tool} {target}", files, iteration)
+            if correction is not None:
+                self._trace_or_null().record(
+                    "correction_applied", iteration=iteration,
+                    correction_id=correction.correction_id,
+                    problems=list(correction.problem_ids)[:20],
+                    files=files[:5],
+                )
+                self._save_task_state("correction")
+        except Exception as error:
+            logger.warning("Correction falhou: %s", error)
+
+    def _mark_attempt_failed(self, tool: str, arguments: dict) -> None:
+        """Execução mutante com erro de tool → in_progress vira blocked."""
+        try:
+            if not self._is_mutating(tool, arguments):
+                return
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return
+            marked = state.mark_attempt_failed(
+                self._attempt_files(tool, arguments))
+            if marked:
+                self._save_task_state("attempt_failed")
+        except Exception as error:
+            logger.warning("Blocked de correção falhou: %s", error)
+
+    def _analyze_test_failure_unified(
+        self, command: str, result, iteration,
+    ) -> list[str]:
+        """Uma análise → TaskState + Checklist (Fase 6, 1 LLM call).
+
+        Substitui checklist-generate(LLM) + analyzer(LLM) por UMA
+        chamada que alimenta os dois. Fallback 100% determinístico
+        (sem segunda análise LLM). Retorna ids de problemas criados.
+        Nunca levanta, nunca inventa problemas.
+        """
+        created: list[str] = []
+        try:
+            trace = self._trace_or_null()
+            trace.record("error_analysis_started", iteration=iteration,
+                         command=str(command or "")[:200])
+            from app.agent.errors.error_analyzer import (
+                UnifiedErrorAnalyzer,
+            )
+
+            planner = getattr(self, "planner", None)
+            unified = UnifiedErrorAnalyzer(
+                llm=getattr(planner, "llm", None)).analyze(
+                    command, result, iteration)
+            state = getattr(self, "task_state", None)
+            invalidated: list[str] = []
+            if state is not None and unified.problems:
+                created, invalidated = state.add_analyzed_problems(
+                    unified.problems, command, iteration)
+            apply_fn = getattr(self.error_checklist, "apply_unified",
+                               None)
+            if apply_fn is None:
+                # Double legado sem projeção: espelha itens existentes
+                # (comportamento Fase 4; checklist segue operacional).
+                try:
+                    items = getattr(self.error_checklist, "_items",
+                                    None) or []
+                    for item in items:
+                        if state is not None:
+                            state.record_problem(
+                                getattr(item, "description", ""),
+                                kind="test_failure",
+                                iteration=iteration)
+                except Exception as error:
+                    logger.warning("TaskState problem falhou: %s",
+                                   error)
+                projected = 0
+            else:
+                try:
+                    projected = apply_fn(unified)
+                except Exception as error:
+                    logger.warning(
+                        "Projeção do checklist falhou: %s", error)
+                    projected = 0
+            trace.record(
+                "error_analysis_completed", iteration=iteration,
+                problems=len(unified.problems),
+                failures=len(unified.failures),
+                checklist_items=len(unified.checklist_items),
+                exit_code=unified.exit_code,
+                created=list(created)[:20],
+                invalidated=list(invalidated)[:20],
+                fallback=unified.fallback_used,
+                llm_calls=unified.llm_calls,
+                error=(unified.error or "")[:120],
+            )
+            for pid in list(created)[:20]:
+                trace.record("problem_created", iteration=iteration,
+                             problem_id=pid)
+            for pid in list(invalidated)[:20]:
+                trace.record("problem_invalidated", iteration=iteration,
+                             problem_id=pid)
+            if created or invalidated or projected:
+                self._save_task_state("analysis")
+        except Exception as error:
+            logger.warning("Análise unificada falhou: %s", error)
+        return created
 
     def _emit_task_state_update(self, iteration) -> None:
         """Evento compacto de evolução do estado (sem snapshot gigante)."""
@@ -773,27 +1035,34 @@ class Runner:
             self._save_task_state("infra_failure")
             return
 
-        try:
-            self.error_checklist.generate(command, result, iteration)
-        except Exception as error:
-            # O checklist de erros é um auxílio, não um requisito — se
-            # a extração falhar, o Planner ainda tem o texto bruto do
-            # resultado no contexto normal.
-            logger.warning(
-                "Falha ao gerar checklist de erros: %s", error
-            )
-        # Fase 4: espelha os itens extraídos como problemas observados
-        # (descrições curtas; detalhe segue no error checklist).
-        try:
-            state = getattr(self, "task_state", None)
-            if state is not None:
-                items = getattr(self.error_checklist, "_items", None) or []
-                for item in items:
-                    state.record_problem(
-                        getattr(item, "description", ""),
-                        kind="test_failure", iteration=iteration)
-        except Exception as error:
-            logger.warning("TaskState problem falhou: %s", error)
+        if bool(getattr(Config, "error_analyzer", False)):
+            # Fase 6: UMA análise → TaskState + Checklist + Planner +
+            # Executor (1 LLM call; fallback determinístico sem LLM).
+            self._analyze_test_failure_unified(
+                command, result, iteration)
+        else:
+            # Legado (Fase 5 desligado): checklist com LLM própria +
+            # espelho no TaskState (comportamento anterior intacto).
+            try:
+                self.error_checklist.generate(command, result, iteration)
+            except Exception as error:
+                # O checklist de erros é um auxílio, não um requisito —
+                # se a extração falhar, o Planner ainda tem o texto
+                # bruto do resultado no contexto normal.
+                logger.warning(
+                    "Falha ao gerar checklist de erros: %s", error
+                )
+            try:
+                state = getattr(self, "task_state", None)
+                if state is not None:
+                    items = getattr(
+                        self.error_checklist, "_items", None) or []
+                    for item in items:
+                        state.record_problem(
+                            getattr(item, "description", ""),
+                            kind="test_failure", iteration=iteration)
+            except Exception as error:
+                logger.warning("TaskState problem falhou: %s", error)
         # Fase 4 (integração): falha espelhada no plan + persistência.
         self._sync_task_plan()
         self._save_task_state("test_failure")
@@ -1695,6 +1964,48 @@ class Runner:
             if marked:
                 self._emit("checklist_updated", marked=marked)
 
+            # Fase 5: gate de retest — teste/validação com problemas
+            # pendentes não roda de novo; volta p/ correção com aviso
+            # estruturado (estado esperado, nunca falha de infra).
+            if decision.action == DecisionAction.TASK:
+                gate_message = self._check_test_gate(
+                    decision.task, iteration)
+                if gate_message is not None:
+                    self._emit(
+                        "planner_error",
+                        error=(
+                            "Teste bloqueado: há problemas conhecidos "
+                            "ainda não corrigidos."
+                        ),
+                    )
+                    trace.record(
+                        "test_blocked_pending_problems",
+                        iteration=iteration,
+                        tool=decision.task.tool,
+                        command=self._gate_command(decision.task),
+                        problems=self._blocking_ids(),
+                    )
+                    self.operational_memory.record(
+                        iteration=iteration,
+                        tool=decision.task.tool,
+                        arguments=decision.task.arguments,
+                        result=gate_message,
+                        success=False,
+                        dependency=False,
+                    )
+                    self._stats.summary_skipped += 1
+                    trace.record(
+                        "summary_skipped",
+                        iteration=iteration,
+                        tool=decision.task.tool,
+                        reason="test_blocked_no_state_change",
+                        file_path=extract_file_path(
+                            decision.task.arguments),
+                    )
+                    context = self._append_context_error(
+                        context, gate_message)
+                    continue
+
             if decision.action == DecisionAction.FINISH:
                 trace.record("finish_requested", iteration=iteration)
                 check_error = self._cached_finish_check(project_name)
@@ -2188,10 +2499,22 @@ class Runner:
                 try:
                     # Fase 4 (integração): TASK + TASK STATE +
                     # resultados das dependencies (sem virar Planner).
+                    # Fase 5: + KNOWN PROBLEMS (hipóteses p/ verificar
+                    # com read_file, nunca ordens cegas). Fase 6: TASK
+                    # STATE com contagens (detalhe no KNOWN PROBLEMS).
+                    executor_context = self._with_task_state(
+                        task_context, problem_detail=False)
+                    problems_block = self._known_problems_block()
+                    if problems_block:
+                        executor_context = (
+                            f"{executor_context}\n\n{problems_block}"
+                            if executor_context.strip()
+                            else problems_block
+                        )
                     execution = self.task_decision_maker.decide(
                         objective=downstream_objective,
                         task=task,
-                        context=self._with_task_state(task_context),
+                        context=executor_context,
                         iteration=iteration,
                     )
 
@@ -2409,6 +2732,11 @@ class Runner:
 
                 continue
 
+            # Fase 5: tentativa mutante começa → problemas
+            # candidatos viram in_progress (hipótese em trabalho).
+            self._mark_correction_attempt(
+                iteration, execution.tool, execution.arguments)
+
             self._emit(
                 "tool_start",
                 name=execution.tool,
@@ -2433,6 +2761,11 @@ class Runner:
                     name=execution.tool,
                     error=str(error),
                 )
+
+                # Fase 5: tentativa mutante falhou → in_progress vira
+                # blocked (precisa de nova abordagem).
+                self._mark_attempt_failed(
+                    execution.tool, execution.arguments)
 
             else:
                 execution_succeeded = self._command_succeeded(
@@ -2488,6 +2821,12 @@ class Runner:
                 and self._is_mutating(execution.tool, execution.arguments)
             ):
                 progress_epoch += 1
+
+            # Fase 5: mutação OK → Correction vinculada (problemas →
+            # pending_verification); o teste confirmará depois.
+            if execution_succeeded:
+                self._note_correction_applied(
+                    iteration, execution.tool, execution.arguments)
 
             self._update_error_checklist(
                 execution.tool,

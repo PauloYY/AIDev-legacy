@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.llm.client import LLMClient
 from app.llm.json_extraction import parse_json_object
@@ -9,11 +9,22 @@ from app.llm.models import Message
 class ErrorChecklistItem:
     id: int
     description: str
+    # --- Fase 6: projeção da análise unificada (defaults seguros;
+    # itens legados/sintéticos continuam válidos sem eles) ---
+    test_id: str = ""
+    affected_files: list[str] = field(default_factory=list)
+    # Comando e iteração de origem (rastreabilidade da evidência).
+    command: str = ""
+    iteration: int | None = None
 
 
 class ErrorChecklist:
-    """Checklist das falhas de teste/build ATUAIS, extraído por LLM a
-    partir da saída bruta de um run_command que falhou.
+    """Checklist das falhas de teste/build ATUAIS.
+
+    Fase 6: projeção operacional da análise unificada
+    (`apply_unified`, sem LLM próprio). O legado `generate` (LLM
+    própria) segue disponível p/ compatibilidade e benchmark, mas o
+    hot path não o usa mais — uma análise, vários consumidores.
 
     Diferente do ProjectChecklist (fixo a run inteira, definido uma
     única vez), este é efêmero e evidência-based:
@@ -104,6 +115,68 @@ REGRAS:
             for index, description in enumerate(descriptions, start=1)
         ]
 
+    def apply_unified(self, analysis) -> int:
+        """Projeção da análise unificada (Fase 6, SEM LLM).
+
+        Substitui os itens pelos da análise (hipóteses primeiro;
+        fatos determinísticos quando só eles existirem) — mesma
+        semântica de regenerate-from-scratch do generate(). Também
+        serve como fallback determinístico (análise sem problemas e
+        sem fatos → checklist vazio, como o legado com []). Retorna
+        quantos itens foram projetados. Nunca levanta.
+        """
+        try:
+            try:
+                command = getattr(analysis, "command", "") or ""
+            except Exception:
+                command = ""
+            entries: list[tuple[str, str, list]] = []
+            problems = list(getattr(analysis, "problems", None) or [])
+            for problem in problems[:self.MAX_ITEMS]:
+                try:
+                    error = getattr(problem, "error", "") or ""
+                    test = getattr(problem, "test", "") or ""
+                    files = [f for f in (
+                        getattr(problem, "affected_files", None)
+                        or []) if isinstance(f, str)][:4]
+                    from app.agent.errors.error_analyzer import (
+                        checklist_description,
+                    )
+
+                    entries.append((checklist_description(test, error),
+                                    test, files))
+                except Exception:
+                    continue
+            if not entries:
+                failures = list(getattr(analysis, "failures", None)
+                                or [])
+                for fact in failures[:self.MAX_ITEMS]:
+                    try:
+                        from app.agent.errors.error_analyzer import (
+                            checklist_description,
+                        )
+
+                        entries.append((checklist_description(
+                            getattr(fact, "test", ""),
+                            getattr(fact, "error", "")),
+                            getattr(fact, "test", "") or "",
+                            [f for f in (
+                                getattr(fact, "files", None) or [])
+                             if isinstance(f, str)][:4]))
+                    except Exception:
+                        continue
+            self._items = [
+                ErrorChecklistItem(id=index, description=description,
+                                   test_id=test_id,
+                                   affected_files=list(files),
+                                   command=str(command)[:200])
+                for index, (description, test_id,
+                            files) in enumerate(entries, start=1)
+            ]
+            return len(self._items)
+        except Exception:
+            return 0
+
     def note_infra_failure(self, command: str, reason: str) -> None:
         """Registra falha de infra/timeout sem descartar itens reais.
 
@@ -143,9 +216,17 @@ REGRAS:
             "manualmente, só corrigir e rodar o teste de novo):",
         ]
 
-        lines += [
-            f"- {item.id}. {item.description}" for item in self._items
-        ]
+        for item in self._items:
+            line = f"- {item.id}. {item.description}"
+            try:
+                files = [f for f in (
+                    getattr(item, "affected_files", None) or [])
+                    if isinstance(f, str)][:4]
+            except Exception:
+                files = []
+            if files:
+                line += f" [files: {', '.join(files)}]"
+            lines.append(line)
 
         return "\n".join(lines)
 

@@ -123,6 +123,9 @@ class FakeChecklist:
 
 
 class FakeErrorChecklist:
+    def __init__(self):
+        self.applied = []
+
     def reset(self):
         pass
 
@@ -131,6 +134,11 @@ class FakeErrorChecklist:
 
     def generate(self, command, output, iteration=None):
         pass
+
+    def apply_unified(self, analysis):
+        # Projeção Fase 6 (fake: só registra p/ asserções).
+        self.applied.append(analysis)
+        return 0
 
     def note_infra_failure(self, command, reason):
         pass

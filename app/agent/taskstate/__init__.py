@@ -21,6 +21,17 @@ NÃO é injetado nos prompts do Planner/Executor — migração futura.
 """
 
 from app.agent.taskstate.task_state import (
+    BLOCKING_PROBLEM_STATUSES,
+    PLAN_STATUS_BLOCKED,
+    PLAN_STATUS_COMPLETED,
+    PLAN_STATUS_IN_PROGRESS,
+    PLAN_STATUS_PENDING,
+    PROBLEM_STATUS_BLOCKED,
+    PROBLEM_STATUS_IN_PROGRESS,
+    PROBLEM_STATUS_INVALIDATED,
+    PROBLEM_STATUS_PENDING,
+    PROBLEM_STATUS_PENDING_VERIFICATION,
+    PROBLEM_STATUS_RESOLVED,
     Ambiguity,
     Correction,
     DecisionRecord,
@@ -34,6 +45,17 @@ from app.agent.taskstate.task_state import (
 )
 
 __all__ = [
+    "BLOCKING_PROBLEM_STATUSES",
+    "PLAN_STATUS_BLOCKED",
+    "PLAN_STATUS_COMPLETED",
+    "PLAN_STATUS_IN_PROGRESS",
+    "PLAN_STATUS_PENDING",
+    "PROBLEM_STATUS_BLOCKED",
+    "PROBLEM_STATUS_IN_PROGRESS",
+    "PROBLEM_STATUS_INVALIDATED",
+    "PROBLEM_STATUS_PENDING",
+    "PROBLEM_STATUS_PENDING_VERIFICATION",
+    "PROBLEM_STATUS_RESOLVED",
     "Ambiguity",
     "Correction",
     "DecisionRecord",

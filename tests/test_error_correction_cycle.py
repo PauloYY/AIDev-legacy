@@ -208,40 +208,47 @@ def test_observed_trace_flow_is_allowed(real_tools):
 
 # 6/7. Erro identificado e disponível para o Planner.
 def test_failing_test_error_reaches_planner_context(real_tools):
+    # Fase 5: retest sem correção é bloqueado pelo gate — o fluxo
+    # correto insere um write (fix) entre a falha e o retest.
     write_file("p", "dummy.txt", "x")
     llm = StubLLM(["pytest falhou em test_x: AssertionError"])
     checklist = ErrorChecklist(llm)
     fail = _run_task(FAIL_PYTEST)
+    fix = _write_task(path="app.py", content="x = 1\n")
     ok = _run_task(PASS_PYTEST)
     runner = _real_runner(
         real_tools,
-        [_task_decision(fail), _finish(), _task_decision(ok), _finish()],
+        [_task_decision(fail), _finish(), _task_decision(fix),
+         _task_decision(ok), _finish()],
         [ExecutionDecision(tool="run_command", arguments=fail.arguments),
+         ExecutionDecision(tool="write_file", arguments=fix.arguments),
          ExecutionDecision(tool="run_command", arguments=ok.arguments)],
         error_checklist=checklist,
     )
     result, _ = _run_events(runner, objective="o", project_name="p")
     assert result == "done"
     contexts = runner.planner.received_contexts
-    assert any("pytest falhou em test_x" in ctx for ctx in contexts)
-    checklist_calls = [c for c in llm.calls
-                       if c["component"] == "ErrorChecklist"]
-    assert len(checklist_calls) == 1
-    assert checklist_calls[0]["iteration"] == 1
+    # Fase 6: o Planner recebe a evidência REAL (não mais o texto
+    # canned do StubLLM, que era resposta fake do checklist legado).
+    assert any("nonexistent_path_xyz" in ctx for ctx in contexts)
     assert checklist.pending_count == 0
 
 
 # 8. Erro resolvido limpa o checklist e libera o finish.
 def test_resolved_error_unblocks_finish(real_tools):
+    # Fase 5: retest exige correção antes (gate); fluxo corrigido.
     write_file("p", "dummy.txt", "x")
     llm = StubLLM(["algum erro"])
     checklist = ErrorChecklist(llm)
     fail = _run_task(FAIL_PYTEST)
+    fix = _write_task(path="app.py", content="x = 1\n")
     ok = _run_task(PASS_PYTEST)
     runner = _real_runner(
         real_tools,
-        [_task_decision(fail), _task_decision(ok), _finish()],
+        [_task_decision(fail), _task_decision(fix), _task_decision(ok),
+         _finish()],
         [ExecutionDecision(tool="run_command", arguments=fail.arguments),
+         ExecutionDecision(tool="write_file", arguments=fix.arguments),
          ExecutionDecision(tool="run_command", arguments=ok.arguments)],
         error_checklist=checklist,
     )
@@ -335,9 +342,11 @@ def test_timeout_preserves_errors_and_blocks_finish(real_tools):
     llm = StubLLM(["ERRO REAL"])
     checklist = ErrorChecklist(llm)
     runner = _real_runner(real_tools, [], [], error_checklist=checklist)
+    # Fase 6: saída com falha parseável (evidência real p/ unificada).
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
-        "STATUS: falha (exit code 1)\noutput", False, iteration=1)
+        "STATUS: falha (exit code 1)\nFAILED t.py::test_x\nboom",
+        False, iteration=1)
     assert checklist.pending_count == 1
     calls_before = len(llm.calls)
 
@@ -374,7 +383,7 @@ def test_tool_exception_preserves_errors(real_tools):
     runner = _real_runner(real_tools, [], [], error_checklist=checklist)
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
-        "STATUS: falha (exit code 1)\noutput", False)
+        "STATUS: falha (exit code 1)\nFAILED t.py::test_x\nboom", False)
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
         "ERRO NA EXECUÇÃO DA TOOL:\nRuntimeError: sandbox explodiu",

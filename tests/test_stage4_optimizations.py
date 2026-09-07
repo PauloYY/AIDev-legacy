@@ -313,8 +313,14 @@ def test_small_results_untouched_and_legacy_default_integral():
     assert big in TaskContextBuilder().build(task, [big])
 
 
-def test_error_checklist_still_receives_full_result(tmp_path):
-    """Caso 7: extração de erros usa o resultado INTEGRAL."""
+def test_error_checklist_still_receives_full_result(tmp_path,
+                                                      monkeypatch):
+    """Caso 7: extração de erros usa o resultado INTEGRAL.
+
+    Caminho legado (Fase 6 usa análise unificada; ver teste próprio
+    de resultado integral em test_fase6_unified_errors.py).
+    """
+    monkeypatch.setattr(Config, "error_analyzer", False)
     big = "STATUS: falha (exit code 1)\n" + "E" * 60000
     checklist = _RecordingErrorChecklist()
     runner = _runner([], [], NullTrace(),
