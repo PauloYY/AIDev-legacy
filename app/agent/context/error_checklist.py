@@ -44,7 +44,9 @@ class ErrorChecklist:
     def clear(self) -> None:
         self._items = []
 
-    def generate(self, command: str, output: str) -> None:
+    def generate(
+        self, command: str, output: str, iteration: int | None = None
+    ) -> None:
         truncated = str(output)
 
         if len(truncated) > self.MAX_INPUT_CHARS:
@@ -86,6 +88,7 @@ REGRAS:
         response = self.llm.generate(
             messages=[Message(role="user", content=prompt)],
             component="ErrorChecklist",
+            iteration=iteration,
         )
 
         data = parse_json_object(response.content)
@@ -100,6 +103,29 @@ REGRAS:
             ErrorChecklistItem(id=index, description=str(description))
             for index, description in enumerate(descriptions, start=1)
         ]
+
+    def note_infra_failure(self, command: str, reason: str) -> None:
+        """Registra falha de infra/timeout sem descartar itens reais.
+
+        Timeout ou erro de execução não é evidência de que os testes
+        passam — então os itens anteriores são preservados e, se não
+        houver nenhum, um item sintético garante o bloqueio do finish
+        até um run com sucesso (que limpa tudo via clear()).
+        """
+
+        description = (
+            f"Comando '{command}' {reason}; rode-o novamente e "
+            "confirme que passa antes de finalizar."
+        )
+
+        if any(item.description == description for item in self._items):
+            return
+
+        self._items.append(
+            ErrorChecklistItem(
+                id=len(self._items) + 1, description=description
+            )
+        )
 
     def render(self) -> str | None:
         """Retorna o bloco de contexto, ou None quando não há nenhuma

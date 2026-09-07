@@ -1,9 +1,83 @@
+import os
+import signal
 import subprocess
 
 from app.config import Config
 from app.tools.base import Tool, ToolType
 from app.tools.config import get_projects_dir
 from app.tools.execution import sandbox
+
+
+def _run_direct_without_sandbox(
+    command: str,
+    project_dir,
+    stdin: str | None,
+    timeout: int,
+) -> subprocess.CompletedProcess:
+    """Executa `command` via shell fora do Docker, com kill da árvore.
+
+    Com `shell=True` existe um intermediário (`/bin/sh -c ...`) e o
+    trabalho real roda como neto. O `subprocess.run()` padrão mata só
+    o filho direto no timeout, orfanando o resto (ex.: `python3 loop.py`
+    com PPID=1 a 100% CPU). Por isso o processo é iniciado como líder
+    de uma nova sessão/grupo (`start_new_session=True`, logo o PGID do
+    grupo é o próprio PID criado aqui) e, no timeout, o GRUPO inteiro
+    recebe SIGKILL — nunca o grupo do AIDev.
+    """
+
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        cwd=project_dir,
+        stdin=subprocess.PIPE if stdin is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+    try:
+        stdout, stderr = proc.communicate(input=stdin, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        # Drena os pipes e faz reap do filho direto (evita zumbi).
+        try:
+            proc.communicate()
+        except Exception:
+            pass
+        raise
+
+    return subprocess.CompletedProcess(
+        command, proc.returncode, stdout, stderr
+    )
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Mata somente o grupo criado para `proc` (PGID == PID do filho).
+
+    Silencioso quando o processo já terminou sozinho na corrida entre
+    o timeout e o kill (ProcessLookupError) ou sem permissão.
+    """
+
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        pgid = None
+
+    # Trava de segurança: só mata se o grupo for o do próprio filho
+    # (líder de sessão criado com start_new_session=True). Nunca o
+    # grupo do processo atual.
+    if pgid is not None and pgid == proc.pid and pgid != os.getpgrp():
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+    try:
+        proc.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
 
 
 def run_command(
@@ -53,14 +127,11 @@ def run_command(
             )
 
         else:
-            result = subprocess.run(
+            result = _run_direct_without_sandbox(
                 command,
-                shell=True,
-                cwd=project_dir,
-                input=stdin,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+                project_dir,
+                stdin,
+                timeout,
             )
 
     except subprocess.TimeoutExpired:

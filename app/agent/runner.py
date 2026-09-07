@@ -1,8 +1,10 @@
 import logging
+import time
 from collections import deque
 
 from app.agent.events import AgentEvent
 from app.agent.execution.validator import TaskValidator
+from app.agent.perf import AgentStats, format_performance_summary
 from app.agent.planning.decision import DecisionAction
 from app.agent.planning.planner import Planner
 from app.agent.context.task_context_builder import TaskContextBuilder
@@ -43,6 +45,18 @@ class Runner:
     )
 
     FINISH_CHECK_TOOL = "check_project"
+
+    # Fase 3 (OPT-1): tools puramente observadoras — não alteram o disco
+    # de forma relevante para o veredito do check_project, logo não
+    # invalidam o cache de validação do finish.
+    READ_ONLY_TOOLS = frozenset({
+        "read_file",
+        "list_files",
+        "find_references",
+        "list_symbols",
+    })
+
+    _FINISH_CHECK_MISS = object()
 
     def __init__(
         self,
@@ -85,6 +99,14 @@ class Runner:
         self.max_iterations = max_iterations or self.MAX_ITERATIONS
 
     def _emit(self, event_type: str, **data):
+        # Fase 3: contadores de performance (não alteram eventos).
+        stats = getattr(self, "_stats", None)
+        if stats is not None:
+            if event_type == "planner_error":
+                stats.corrections += 1
+            elif event_type == "executor_error":
+                stats.executor_errors += 1
+
         if self.on_event:
             self.on_event(
                 AgentEvent(
@@ -92,6 +114,29 @@ class Runner:
                     data=data,
                 )
             )
+
+    def _note_test_run(self, tool: str, arguments: dict, succeeded: bool) -> None:
+        """Conta execuções de teste/build (Fase 3, só métrica)."""
+
+        stats = getattr(self, "_stats", None)
+        if stats is None:
+            return
+
+        if tool != "run_command":
+            return
+
+        command = ""
+        if isinstance(arguments, dict):
+            command = str(arguments.get("command", ""))
+
+        if not self.operational_memory.is_test_or_build_command(command):
+            return
+
+        stats.test_runs += 1
+        if succeeded:
+            stats.test_passed += 1
+        else:
+            stats.test_failed += 1
 
     def _detect_loop(self, history):
         if len(history) < history.maxlen:
@@ -172,6 +217,8 @@ class Runner:
         except Exception as tool_error:
             result = f"ERRO NA INVESTIGAÇÃO: {tool_error}"
 
+        self._note_tool_execution(tool_name)
+
         investigation_succeeded = self._command_succeeded(tool_name, result)
 
         self._emit(
@@ -188,6 +235,9 @@ class Runner:
             result=result,
             success=investigation_succeeded,
             dependency=True,
+        )
+        self._note_test_run(
+            tool_name, task.arguments, investigation_succeeded
         )
 
         return (
@@ -215,7 +265,13 @@ class Runner:
         """
 
         if tool == "run_command":
-            return "STATUS: sucesso" in str(result)
+            # O formato é controlado por run_command._format_result, cuja
+            # primeira linha é sempre o veredito real ("STATUS: sucesso
+            # (exit code 0)" ou "STATUS: falha ..."). Buscar no texto
+            # inteiro gerava falso-positivo quando a saída do comando
+            # continha o literal "STATUS: sucesso" apesar de falhar.
+            first_line = str(result).lstrip().split("\n", 1)[0]
+            return first_line.startswith("STATUS: sucesso")
 
         return True
 
@@ -225,6 +281,7 @@ class Runner:
         arguments: dict,
         result,
         succeeded: bool,
+        iteration: int | None = None,
     ) -> None:
         """Mantém o CHECKLIST DE ERROS sincronizado com o resultado
         real do último run_command de teste/build.
@@ -233,6 +290,10 @@ class Runner:
         regera do zero a partir da saída atual (evidência real, não
         autoavaliação da LLM). Qualquer outra tool, ou um run_command
         que não pareça teste/build, não mexe no checklist de erros.
+
+        Falha de infra (timeout do sandbox, tool que lançou exceção)
+        NÃO regenera nem limpa: preserva os itens reais anteriores e
+        garante bloqueio até um run com sucesso (timeout não é passe).
         """
 
         if tool != "run_command":
@@ -247,8 +308,23 @@ class Runner:
             self.error_checklist.clear()
             return
 
+        text = str(result).lstrip()
+
+        if text.startswith("TIMEOUT:") or text.startswith(
+            "ERRO NA EXECUÇÃO DA TOOL:"
+        ):
+            # Infraestrutura, não evidência de teste: não descarta os
+            # itens reais anteriores nem finge que está tudo certo.
+            reason = (
+                "excedeu o tempo limite"
+                if text.startswith("TIMEOUT:")
+                else "falhou por erro de infraestrutura"
+            )
+            self.error_checklist.note_infra_failure(command, reason)
+            return
+
         try:
-            self.error_checklist.generate(command, result)
+            self.error_checklist.generate(command, result, iteration)
         except Exception as error:
             # O checklist de erros é um auxílio, não um requisito — se
             # a extração falhar, o Planner ainda tem o texto bruto do
@@ -305,6 +381,38 @@ class Runner:
             + f"{self.planner_error_memory.render()}\n\n"
             + f"{self.operational_memory.render(project_name)}"
         )
+
+    def _note_tool_execution(self, tool_name: str) -> None:
+        """Invalida o cache do finish-check após escrita/efeito (Fase 3).
+
+        Leituras puras preservam o cache: o veredito do check_project é
+        função determinística dos fontes no disco. O próprio check_project
+        também não invalida (sintaxe/compilação só-leitura; artefatos vão
+        para diretórios ignorados como __pycache__/target).
+        """
+
+        if tool_name not in self.READ_ONLY_TOOLS:
+            self._finish_check_cache = self._FINISH_CHECK_MISS
+
+    def _cached_finish_check(self, project_name: str) -> str | None:
+        """check_project com cache entre finishs consecutivos (Fase 3).
+
+        Um finish bloqueado dá `continue` sem executar nada; o próximo
+        finish revalidaria arquivos idênticos (N subprocess/containers).
+        A verificação LLM (FinalVerification, estocástica) continua
+        sempre fresca — só o veredito determinístico é reutilizado.
+        """
+
+        cached = getattr(
+            self, "_finish_check_cache", self._FINISH_CHECK_MISS
+        )
+        if cached is not self._FINISH_CHECK_MISS:
+            logger.debug("Reutilizando check_project do finish anterior.")
+            return cached
+
+        report = self._run_finish_check(project_name)
+        self._finish_check_cache = report
+        return report
 
     def _run_finish_check(self, project_name: str) -> str | None:
         """Roda check_project antes de aceitar um finish.
@@ -416,6 +524,9 @@ class Runner:
         self._emit("agent_start")
 
         self._current_objective = objective
+        self._stats = AgentStats()
+        self._finish_check_cache = self._FINISH_CHECK_MISS
+        run_start = time.monotonic()
 
         summary = self.project_context.initialize(
             project_name
@@ -442,7 +553,16 @@ class Runner:
         )
 
         task_history = deque(maxlen=self.MAX_TASK_HISTORY)
-        succeeded_mutations = set()
+        # Assinatura (tool, args) -> época da última execução bem-sucedida.
+        # Uma re-execução idêntica só é bloqueada quando NENHUMA outra
+        # execução ocorreu desde aquele sucesso (sem evidência nova).
+        # Qualquer execução posterior que não seja uma mutação
+        # bem-sucedida — falha de teste/tool OU nova investigação —
+        # avança a época e libera nova tentativa, que pode ser uma
+        # correção informada pela nova evidência. Laços reais seguem
+        # contidos pelo detector de janela, estagnação e max_iterations.
+        succeeded_mutations: dict = {}
+        progress_epoch = 0
         stagnant_iterations = 0
         planner_retry_context = ""
         iteration = 0
@@ -474,6 +594,7 @@ class Runner:
                 decision = None
 
                 self._emit("planner_start")
+                self._stats.planner_calls += 1
 
                 try:
                     decision = self.planner.plan(
@@ -596,7 +717,7 @@ class Runner:
                 self._emit("checklist_updated", marked=marked)
 
             if decision.action == DecisionAction.FINISH:
-                check_error = self._run_finish_check(project_name)
+                check_error = self._cached_finish_check(project_name)
 
                 if check_error:
                     self._emit(
@@ -620,6 +741,7 @@ class Runner:
 
                     task_history.clear()
                     stagnant_iterations = 0
+                    self._stats.finish_blocks += 1
 
                     continue
 
@@ -648,6 +770,7 @@ class Runner:
 
                     task_history.clear()
                     stagnant_iterations = 0
+                    self._stats.finish_blocks += 1
 
                     continue
 
@@ -680,6 +803,7 @@ class Runner:
 
                     task_history.clear()
                     stagnant_iterations = 0
+                    self._stats.finish_blocks += 1
 
                     continue
 
@@ -697,10 +821,33 @@ class Runner:
                         self.checklist.pending_count,
                     )
 
+                updater_summary_fn = getattr(
+                    self.planner.llm.usage,
+                    "project_summary_section",
+                    None,
+                )
+                self._stats.iterations = iteration
+                self._stats.wall_ms = (time.monotonic() - run_start) * 1000
+                tool_stats_fn = getattr(
+                    self.tools, "tool_stats", None
+                )
+                try:
+                    perf_summary = format_performance_summary(
+                        "SUCCESS",
+                        self.planner.llm.usage,
+                        tool_stats_fn() if tool_stats_fn else {},
+                        self._stats,
+                    )
+                except Exception:
+                    perf_summary = None
                 self._emit(
                     "agent_done",
                     usage=self.planner.llm.usage.summary(),
                     usage_breakdown=self.planner.llm.usage.breakdown(),
+                    updater_summary=updater_summary_fn()
+                    if updater_summary_fn
+                    else None,
+                    perf_summary=perf_summary,
                 )
                 return decision.content
 
@@ -774,6 +921,7 @@ class Runner:
 
                 task_history.clear()
                 stagnant_iterations = 0
+                self._stats.loop_hits += 1
 
                 continue
 
@@ -833,12 +981,27 @@ class Runner:
                     success=dependency_succeeded,
                     dependency=True,
                 )
+                self._note_tool_execution(dependency.tool)
+                self._note_test_run(
+                    dependency.tool,
+                    dependency.arguments,
+                    dependency_succeeded,
+                )
+
+                if not (
+                    dependency_succeeded
+                    and self._is_mutating(
+                        dependency.tool, dependency.arguments
+                    )
+                ):
+                    progress_epoch += 1
 
                 self._update_error_checklist(
                     dependency.tool,
                     dependency.arguments,
                     result,
                     dependency_succeeded,
+                    iteration,
                 )
 
                 dependency_results.append(result)
@@ -953,9 +1116,14 @@ class Runner:
 
             # Bloqueia repetição exata de uma operação mutante
             # (write_file ou run_command que escreve arquivos) que já
-            # foi executada com sucesso antes — mesmo que os detectores
-            # de janela/estagnação acima não tenham pego, por estar
-            # muito distante no histórico.
+            # foi executada com sucesso antes SEM que nenhuma outra
+            # execução tenha ocorrido desde então — nesse caso refazê-la
+            # é inútil, as mudanças já existem. Se houve falha posterior
+            # (teste quebrou, tool errou) ou nova investigação, a
+            # repetição pode ser uma tentativa legítima de correção
+            # informada pela nova evidência, e é permitida (outros
+            # detectores — janela de tasks, estagnação, max_iterations
+            # — seguem valendo).
             execution_signature = (
                 execution.tool,
                 repr(execution.arguments),
@@ -963,7 +1131,8 @@ class Runner:
 
             if (
                 self._is_mutating(execution.tool, execution.arguments)
-                and execution_signature in succeeded_mutations
+                and succeeded_mutations.get(execution_signature)
+                == progress_epoch
             ):
                 error = (
                     "O Executor tentou repetir uma operação que já foi "
@@ -987,6 +1156,7 @@ class Runner:
 
                 task_history.clear()
                 stagnant_iterations = 0
+                self._stats.loop_hits += 1
 
                 continue
 
@@ -1029,8 +1199,13 @@ class Runner:
                 if execution_succeeded and self._is_mutating(
                     execution.tool, execution.arguments
                 ):
-                    stagnant_iterations = 0
-                    succeeded_mutations.add(execution_signature)
+                    # Só zera a estagnação para operações inéditas: um
+                    # sucesso com conteúdo idêntico a sucesso anterior
+                    # não é evidência de progresso (a correção repetida
+                    # precisa se provar no teste seguinte).
+                    if execution_signature not in succeeded_mutations:
+                        stagnant_iterations = 0
+                    succeeded_mutations[execution_signature] = progress_epoch
 
             logger.debug(
                 "Resultado de %s: %s",
@@ -1046,9 +1221,23 @@ class Runner:
                 success=execution_succeeded,
                 dependency=False,
             )
+            self._note_tool_execution(execution.tool)
+            self._note_test_run(
+                execution.tool, execution.arguments, execution_succeeded
+            )
+
+            if not (
+                execution_succeeded
+                and self._is_mutating(execution.tool, execution.arguments)
+            ):
+                progress_epoch += 1
 
             self._update_error_checklist(
-                execution.tool, execution.arguments, result, execution_succeeded
+                execution.tool,
+                execution.arguments,
+                result,
+                execution_succeeded,
+                iteration,
             )
 
             summary = self.project_summary_updater.update(
@@ -1056,6 +1245,7 @@ class Runner:
                 project_name=project_name,
                 task=task,
                 result=result,
+                iteration=iteration,
             )
 
             context = (

@@ -111,6 +111,16 @@ def handle_agent_event(event: AgentEvent):
         if usage_breakdown:
             print(f"\n{usage_breakdown}")
 
+        updater_summary = event.data.get("updater_summary")
+
+        if updater_summary:
+            print(f"\n{updater_summary}")
+
+        perf_summary = event.data.get("perf_summary")
+
+        if perf_summary:
+            print(f"\n{perf_summary}")
+
     elif event.type == "final_verification_start":
         print("→ Verificação final do projeto...")
 

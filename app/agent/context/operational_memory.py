@@ -33,6 +33,12 @@ class OperationalMemory:
     MAX_ACTIONS = 20
     MAX_RESULT_CHARS = 300
     MAX_FILES_LISTED = 300
+    # Etapa 2C: limite seguro para valores de argumentos exibidos no
+    # histórico. Impede que uma ação individual insira dezenas de KB
+    # no contexto do Planner (ex.: write_file com 10-50 KB). Só afeta
+    # a REPRESENTAÇÃO do histórico — os argumentos reais do Executor
+    # continuam intactos em ActionRecord.arguments.
+    MAX_ARG_VALUE_CHARS = 200
 
     # A cada quantas iterações uma investigação avulsa (read_file/
     # list_files/find_references como task principal, fora do passe
@@ -221,7 +227,77 @@ class OperationalMemory:
     def _format_action(self, action: ActionRecord) -> str:
         status = "OK" if action.success else "FALHOU"
         kind = "dependency" if action.dependency else "task"
-        return f"[{action.iteration}] ({kind}, {status}) {action.tool}({action.arguments}) -> {action.result_summary}"
+        args_repr = self._format_arguments_for_history(
+            action.tool, action.arguments
+        )
+        return f"[{action.iteration}] ({kind}, {status}) {action.tool}({args_repr}) -> {action.result_summary}"
+
+    def _format_arguments_for_history(
+        self, tool: str, arguments: dict[str, Any] | None
+    ) -> str:
+        """Representação compacta dos argumentos para o histórico.
+
+        Regra principal (Etapa 2C): o histórico registra O QUE aconteceu,
+        não repete o conteúdo inteiro do que foi escrito.
+
+        - write_file.content NUNCA aparece (vira "<omitted: N chars>").
+        - Qualquer valor string maior que MAX_ARG_VALUE_CHARS é truncado
+          com indicador "[+N chars]".
+        - Valores não-string com repr muito longo são resumidos do mesmo
+          jeito.
+        - Nunca muta o dict original (cria um novo dict compacto).
+        """
+        if arguments is None:
+            return "{}"
+        if not isinstance(arguments, dict):
+            return self._truncate_value(str(arguments))
+
+        compact: dict[str, Any] = {}
+        for key, value in arguments.items():
+            if tool == "write_file" and key == "content":
+                if value is None:
+                    compact[key] = "<empty>"
+                else:
+                    text = value if isinstance(value, str) else str(value)
+                    if len(text) == 0:
+                        compact[key] = "<empty>"
+                    else:
+                        compact[key] = f"<omitted: {len(text)} chars>"
+                continue
+
+            if isinstance(value, str):
+                if len(value) > self.MAX_ARG_VALUE_CHARS:
+                    omitted = len(value) - self.MAX_ARG_VALUE_CHARS
+                    compact[key] = (
+                        f"{value[:self.MAX_ARG_VALUE_CHARS]}"
+                        f"... [+{omitted} chars]"
+                    )
+                else:
+                    compact[key] = value
+                continue
+
+            # Não-string: preserva se o repr for pequeno, senão resume.
+            try:
+                rep = repr(value)
+            except Exception:
+                rep = str(value)
+            if len(rep) > self.MAX_ARG_VALUE_CHARS + 20:
+                text = str(value)
+                omitted = len(text) - self.MAX_ARG_VALUE_CHARS
+                compact[key] = (
+                    f"{text[:self.MAX_ARG_VALUE_CHARS]}"
+                    f"... [+{omitted} chars]"
+                )
+            else:
+                compact[key] = value
+
+        return repr(compact)
+
+    def _truncate_value(self, text: str) -> str:
+        if len(text) <= self.MAX_ARG_VALUE_CHARS:
+            return text
+        omitted = len(text) - self.MAX_ARG_VALUE_CHARS
+        return f"{text[:self.MAX_ARG_VALUE_CHARS]}... [+{omitted} chars]"
 
     def _summarize(self, result: Any) -> str:
         text = str(result)

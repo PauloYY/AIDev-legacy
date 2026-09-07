@@ -3,6 +3,32 @@ from datetime import datetime
 from typing import Any
 
 from app.llm.models import Usage
+from app.llm.utils import estimate_tokens
+
+
+def _estimated_tokens_for_chars(chars: int) -> int:
+    """estimate_tokens() sem o texto real (só p/ agregados do tracker)."""
+    if not chars:
+        return 0
+    return max(1, chars // 4)
+
+
+@dataclass
+class ToolCallRecord:
+    """Uma execução de tool (Fase 3): sem tokens, sem conteúdo sensível.
+
+    `command` só para run_command (truncado na origem); nunca inclui
+    conteúdo de write_file.
+    """
+
+    tool: str
+    duration_ms: float
+    success: bool
+    timestamp: str
+    error: str | None = None
+    timeout: bool = False
+    exit_code: int | None = None
+    command: str | None = None
 
 
 @dataclass
@@ -14,6 +40,16 @@ class CallRecord:
     timestamp: str
     prompt_chars: int = 0
     completion_chars: int = 0
+    # Etapa 2B: decomposição observacional do prompt do Planner.
+    # {component: {"chars": int, "estimated_tokens": int}}. Apenas para
+    # component="Planner"; None para demais componentes/chamadas antigas.
+    context_breakdown: dict[str, dict[str, int]] | None = None
+    # Etapa 2E: observabilidade por chamada (defaults mantêm compat).
+    duration_ms: float = 0.0
+    attempt: int = 1
+    empty_response: bool = False
+    success: bool = True
+    error: str | None = None
 
     @property
     def total_chars(self) -> int:
@@ -33,6 +69,7 @@ class UsageTracker:
         self.by_provider: dict[str, Usage] = {}
         self.calls: int = 0
         self._records: list[CallRecord] = []
+        self._tool_records: list[ToolCallRecord] = []
         self._by_component: dict[str, Usage] = {}
         self._component_calls: dict[str, int] = {}
 
@@ -44,6 +81,12 @@ class UsageTracker:
         iteration: int | None = None,
         prompt_chars: int = 0,
         completion_chars: int = 0,
+        context_breakdown: dict[str, dict[str, int]] | None = None,
+        duration_ms: float = 0.0,
+        attempt: int = 1,
+        empty_response: bool = False,
+        success: bool = True,
+        error: str | None = None,
     ) -> None:
         if usage is None:
             return
@@ -71,6 +114,14 @@ class UsageTracker:
                 timestamp=datetime.now().isoformat(),
                 prompt_chars=prompt_chars,
                 completion_chars=completion_chars,
+                context_breakdown=dict(context_breakdown)
+                if context_breakdown is not None
+                else None,
+                duration_ms=duration_ms,
+                attempt=attempt,
+                empty_response=empty_response,
+                success=success,
+                error=error,
             )
         )
 
@@ -137,3 +188,336 @@ class UsageTracker:
 
     def get_records(self) -> list[CallRecord]:
         return list(self._records)
+
+    # ---------- Etapa 2E: métricas do ProjectSummaryUpdater ----------
+
+    def _updater_records(self) -> list[CallRecord]:
+        return [
+            r for r in self._records if r.component == "ProjectSummaryUpdater"
+        ]
+
+    def project_summary_stats(self) -> dict[str, Any]:
+        """Agregados do ProjectSummaryUpdater (Etapa 2E).
+
+        Invocações são delimitadas por attempt==1 (retries compartilham
+        a invocação). Sucesso/falha = estado do último attempt.
+        """
+
+        records = self._updater_records()
+        if not records:
+            return {
+                "invocations": 0,
+                "attempts": 0,
+                "retries": 0,
+                "empty_responses": 0,
+                "successes": 0,
+                "failures": 0,
+                "avg_duration_ms": 0.0,
+                "max_duration_ms": 0.0,
+                "avg_prompt_chars": 0,
+                "max_prompt_chars": 0,
+                "avg_prompt_tokens": 0,
+                "max_prompt_tokens": 0,
+                "avg_completion_tokens": 0.0,
+                "max_completion_tokens": 0,
+                "by_iteration": {},
+            }
+
+        invocations: list[list[CallRecord]] = []
+        for record in records:
+            if record.attempt <= 1 or not invocations:
+                invocations.append([])
+            invocations[-1].append(record)
+
+        attempts = len(records)
+        n_inv = len(invocations)
+        empties = sum(1 for r in records if r.empty_response)
+
+        def _invocation_ok(group: list[CallRecord]) -> bool:
+            last = group[-1]
+            return last.success and not last.empty_response
+
+        successes = sum(1 for group in invocations if _invocation_ok(group))
+        durations = [r.duration_ms for r in records]
+        prompt_chars = [r.prompt_chars for r in records]
+        prompt_tokens = [
+            _estimated_tokens_for_chars(r.prompt_chars) for r in records
+        ]
+        completions = [r.usage.completion_tokens for r in records]
+        by_iteration: dict[Any, int] = {}
+        for r in records:
+            by_iteration[r.iteration] = by_iteration.get(r.iteration, 0) + 1
+
+        return {
+            "invocations": n_inv,
+            "attempts": attempts,
+            "retries": attempts - n_inv,
+            "empty_responses": empties,
+            "successes": successes,
+            "failures": n_inv - successes,
+            "avg_duration_ms": sum(durations) / attempts,
+            "max_duration_ms": max(durations),
+            "avg_prompt_chars": sum(prompt_chars) // attempts,
+            "max_prompt_chars": max(prompt_chars),
+            "avg_prompt_tokens": sum(prompt_tokens) // attempts,
+            "max_prompt_tokens": max(prompt_tokens),
+            "avg_completion_tokens": sum(completions) / attempts,
+            "max_completion_tokens": max(completions),
+            "by_iteration": by_iteration,
+        }
+
+    def project_summary_section(self) -> str | None:
+        """Seção compacta p/ CLI; None quando sem chamadas do componente."""
+
+        stats = self.project_summary_stats()
+        if not stats["invocations"]:
+            return None
+
+        lines = [
+            "ProjectSummaryUpdater:",
+            f"  calls: {stats['invocations']}",
+            f"  retries: {stats['retries']}",
+            f"  empty responses: {stats['empty_responses']}",
+            f"  failures: {stats['failures']}",
+            f"  avg duration: {stats['avg_duration_ms'] / 1000:.2f}s",
+            f"  max duration: {stats['max_duration_ms'] / 1000:.2f}s",
+            f"  avg prompt: {stats['avg_prompt_tokens']} tokens",
+            f"  max prompt: {stats['max_prompt_tokens']} tokens",
+        ]
+        return "\n".join(lines)
+
+    # ---------- Etapa Fase 3: métricas de ferramentas ----------
+
+    def record_tool(
+        self,
+        tool: str,
+        duration_ms: float,
+        success: bool,
+        error: str | None = None,
+        timeout: bool = False,
+        exit_code: int | None = None,
+        command: str | None = None,
+    ) -> None:
+        self._tool_records.append(
+            ToolCallRecord(
+                tool=tool,
+                duration_ms=duration_ms,
+                success=success,
+                timestamp=datetime.now().isoformat(),
+                error=error,
+                timeout=timeout,
+                exit_code=exit_code,
+                command=command,
+            )
+        )
+
+    def get_tool_records(self) -> list["ToolCallRecord"]:
+        return list(self._tool_records)
+
+    def tool_stats(self) -> dict[str, Any]:
+        """Agregados por tool: chamadas, tempos, falhas."""
+
+        records = self._tool_records
+        by_tool: dict[str, dict[str, Any]] = {}
+
+        for record in records:
+            entry = by_tool.setdefault(
+                record.tool,
+                {"calls": 0, "total_ms": 0.0, "max_ms": 0.0,
+                 "failures": 0, "timeouts": 0},
+            )
+            entry["calls"] += 1
+            entry["total_ms"] += record.duration_ms
+            entry["max_ms"] = max(entry["max_ms"], record.duration_ms)
+            if not record.success:
+                entry["failures"] += 1
+            if record.timeout:
+                entry["timeouts"] += 1
+
+        for entry in by_tool.values():
+            entry["avg_ms"] = (
+                entry["total_ms"] / entry["calls"] if entry["calls"] else 0.0
+            )
+
+        total_ms = sum(r.duration_ms for r in records)
+
+        return {
+            "calls": len(records),
+            "total_ms": total_ms,
+            "failures": sum(1 for r in records if not r.success),
+            "timeouts": sum(1 for r in records if r.timeout),
+            "by_tool": by_tool,
+        }
+
+    # ---------- Etapa 2B: instrumentação do contexto do Planner ----------
+
+    def get_planner_context_history(self) -> list[dict[str, Any]]:
+        """Histórico por iteração da decomposição do prompt do Planner.
+
+        Retorna uma lista (ordem de chamada) com:
+        {"iteration", "prompt_chars", "provider_prompt_tokens",
+         "estimated_total_tokens", "sections": {component: {...}}}.
+        Chamadas sem breakdown (não-Planner ou anteriores à Etapa 2B)
+        são ignoradas.
+        """
+        history: list[dict[str, Any]] = []
+        for record in self._records:
+            if record.component != "Planner":
+                continue
+            if not record.context_breakdown:
+                continue
+            estimated_total = sum(
+                entry.get("estimated_tokens", 0)
+                for entry in record.context_breakdown.values()
+            )
+            history.append(
+                {
+                    "iteration": record.iteration,
+                    "prompt_chars": record.prompt_chars,
+                    "provider_prompt_tokens": record.usage.prompt_tokens,
+                    "estimated_total_tokens": estimated_total,
+                    "sections": dict(record.context_breakdown),
+                }
+            )
+        return history
+
+    def planner_context_stats(self) -> dict[str, Any]:
+        """Agregados por componente (total/avg/max estimados) + provider.
+
+        Retorna {"calls", "components": {name: {avg, total, max, avg_chars,
+        total_chars, max_chars}}, "estimated_total_tokens",
+        "provider_prompt_tokens_total", ...}. Vazio (calls=0) se sem dados.
+        """
+        history = self.get_planner_context_history()
+        calls = len(history)
+        if not calls:
+            return {
+                "calls": 0,
+                "components": {},
+                "estimated_total_tokens": 0,
+                "provider_prompt_tokens_total": 0,
+            }
+
+        totals: dict[str, int] = {}
+        maxes: dict[str, int] = {}
+        total_chars: dict[str, int] = {}
+        max_chars: dict[str, int] = {}
+        provider_total = 0
+        estimated_grand = 0
+        for entry in history:
+            provider_total += entry["provider_prompt_tokens"] or 0
+            estimated_grand += entry["estimated_total_tokens"] or 0
+            for name, sec in entry["sections"].items():
+                tok = sec.get("estimated_tokens", 0)
+                ch = sec.get("chars", 0)
+                totals[name] = totals.get(name, 0) + tok
+                total_chars[name] = total_chars.get(name, 0) + ch
+                if name not in maxes or tok > maxes[name]:
+                    maxes[name] = tok
+                if name not in max_chars or ch > max_chars[name]:
+                    max_chars[name] = ch
+
+        components: dict[str, dict[str, int]] = {}
+        for name, total in totals.items():
+            components[name] = {
+                "total_tokens": total,
+                "avg_tokens": total // calls,
+                "max_tokens": maxes.get(name, 0),
+                "total_chars": total_chars.get(name, 0),
+                "avg_chars": total_chars.get(name, 0) // calls,
+                "max_chars": max_chars.get(name, 0),
+            }
+
+        return {
+            "calls": calls,
+            "components": components,
+            "estimated_total_tokens": estimated_grand,
+            "provider_prompt_tokens_total": provider_total,
+        }
+
+    def planner_context_breakdown(self) -> str:
+        """Relatório observacional do contexto do Planner (Etapa 2B).
+
+        Compatível e separado de breakdown(): não altera o formato
+        existente. Mostra média/total/máximo ESTIMADOS por componente,
+        compara com os tokens de prompt reais do provider e lista o
+        crescimento por iteração. Puro relatório — sem otimização.
+        """
+        stats = self.planner_context_stats()
+        calls = stats["calls"]
+        if not calls:
+            return "=== Planner Context Breakdown ===\n\n(no Planner calls with context breakdown recorded)"
+
+        try:
+            from app.agent.planning.prompt_sections import (
+                PLANNER_COMPONENTS,
+            )
+        except Exception:
+            PLANNER_COMPONENTS = []
+
+        components: dict[str, dict[str, int]] = stats["components"]
+        ordered = [c for c in (PLANNER_COMPONENTS or []) if c in components]
+        ordered += sorted([c for c in components if c not in ordered])
+
+        header = (
+            f"{'Component':<22} | {'Avg Tokens':>10} | "
+            f"{'Total Tokens':>12} | {'Max Tokens':>10}"
+        )
+        separator = "-" * len(header)
+        lines = [
+            "=== Planner Context Breakdown ===",
+            "",
+            f"Calls: {calls}",
+            f"Provider prompt tokens (real, sum): {stats['provider_prompt_tokens_total']:,}",
+            f"Estimated tokens (sum of sections): {stats['estimated_total_tokens']:,}",
+            "",
+            header,
+            separator,
+        ]
+        for name in ordered:
+            comp = components[name]
+            lines.append(
+                f"{name:<22} | {comp['avg_tokens']:>10,} | "
+                f"{comp['total_tokens']:>12,} | {comp['max_tokens']:>10,}"
+            )
+        lines.append(separator)
+        avg_total = stats["estimated_total_tokens"] // calls
+        max_total = max(
+            (e["estimated_total_tokens"] for e in self.get_planner_context_history()),
+            default=0,
+        )
+        lines.append(
+            f"{'TOTAL (estimated)':<22} | {avg_total:>10,} | "
+            f"{stats['estimated_total_tokens']:>12,} | {max_total:>10,}"
+        )
+        provider_avg = stats["provider_prompt_tokens_total"] // calls
+        provider_max = max(
+            (
+                e["provider_prompt_tokens"]
+                for e in self.get_planner_context_history()
+            ),
+            default=0,
+        )
+        lines.append(
+            f"{'TOTAL (provider)':<22} | {provider_avg:>10,} | "
+            f"{stats['provider_prompt_tokens_total']:>12,} | {provider_max:>10,}"
+        )
+        lines.append("")
+        lines.append(
+            "Note: estimated tokens use estimate_tokens() (len//4, gross "
+            "approximation for instrumentation). Provider tokens use the "
+            "real tokenizer/billing of the model and include message "
+            "framing overhead (roles, JSON envelope). Small differences "
+            "are expected; large gaps indicate dynamic context growth."
+        )
+        lines.append("")
+        lines.append("--- Per-iteration estimated totals ---")
+        for entry in self.get_planner_context_history():
+            lines.append(
+                f"iteration {entry['iteration']}: "
+                f"estimated={entry['estimated_total_tokens']:,} "
+                f"provider_prompt={entry['provider_prompt_tokens']:,} "
+                f"chars={entry['prompt_chars']:,}"
+            )
+        lines.append("")
+        return "\n".join(lines)

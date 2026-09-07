@@ -1,4 +1,6 @@
+import os
 import subprocess
+import time
 
 import pytest
 
@@ -6,6 +8,44 @@ from app.config import Config
 from app.tools.execution import sandbox
 from app.tools.execution.run_command import run_command
 from app.tools.filesystem.write_file import write_file
+
+
+def _pids_by_script(*names: str) -> set[int]:
+    """PIDs vivos cujo cmdline é `python* <name>` (só stdlib, via /proc).
+
+    Compara argv[1] exato para não confundir com outros testes/processos.
+    """
+
+    found: set[int] = set()
+
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as handle:
+                parts = handle.read().split(b"\0")
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+
+        if (
+            len(parts) >= 2
+            and parts[0].split(b"/")[-1] in (b"python", b"python3")
+            and parts[1].decode(errors="replace") in names
+        ):
+            found.add(int(pid))
+
+    return found
+
+
+def _assert_no_new_pids(names: tuple[str, ...], before: set[int], timeout_s: float = 5.0):
+    """Aguarda (poll) os PIDs novos sumirem; falha listando sobreviventes."""
+
+    deadline = time.time() + timeout_s
+    survivors = (_pids_by_script(*names) - before) or set()
+
+    while survivors and time.time() < deadline:
+        time.sleep(0.2)
+        survivors = _pids_by_script(*names) - before
+
+    assert not survivors, f"processos sobreviventes após timeout: {sorted(survivors)}"
 
 
 def test_run_command_success(projects_root):
@@ -37,9 +77,42 @@ def test_run_command_with_stdin(projects_root):
 def test_run_command_timeout(projects_root):
     write_file("proj", "loop.py", "while True:\n    pass\n")
 
+    before = _pids_by_script("loop.py")
+
     result = run_command("proj", "python3 loop.py", timeout_seconds=1)
 
     assert "TIMEOUT" in result
+    _assert_no_new_pids(("loop.py",), before)
+
+
+def test_run_command_timeout_kills_grandchild_processes(projects_root):
+    write_file("proj", "child_loop.py", "while True:\n    pass\n")
+    write_file(
+        "proj",
+        "parent_loop.py",
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, 'child_loop.py'])\n"
+        "while True:\n    pass\n",
+    )
+
+    before = _pids_by_script("parent_loop.py", "child_loop.py")
+
+    result = run_command("proj", "python3 parent_loop.py", timeout_seconds=1)
+
+    assert "TIMEOUT" in result
+    _assert_no_new_pids(("parent_loop.py", "child_loop.py"), before)
+
+
+def test_run_command_consecutive_timeouts_leave_no_processes(projects_root):
+    write_file("proj", "loop.py", "while True:\n    pass\n")
+
+    before = _pids_by_script("loop.py")
+
+    for _ in range(5):
+        result = run_command("proj", "python3 loop.py", timeout_seconds=1)
+        assert "TIMEOUT" in result
+
+    _assert_no_new_pids(("loop.py",), before)
 
 
 def test_run_command_supports_shell_chaining(projects_root):

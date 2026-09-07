@@ -1,5 +1,24 @@
+from pathlib import Path
+
 from app.tools.base import Tool, ToolType
 from app.tools.config import get_projects_dir
+
+import os
+
+
+# Fase 3 (OPT-2): diretórios de dependências/build gerados — ruído para
+# o Planner (file_list) e custo de walk a cada iteração. Mesmo critério
+# já usado por check_project/find_references para ignorar esses dirs.
+IGNORED_DIRECTORIES = frozenset({
+    ".git",
+    ".venv",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    "target",
+    "build",
+    "dist",
+})
 
 
 def list_files(project_name: str) -> list[str]:
@@ -21,11 +40,26 @@ def list_files(project_name: str) -> list[str]:
             f"O projeto não é um diretório: {project_name}"
         )
 
-    return [
-        str(path.relative_to(project_path))
-        for path in project_path.rglob("*")
-        if path.is_file()
-    ]
+    visible: list[str] = []
+
+    # os.walk (em vez de rglob) para podar diretórios ignorados antes
+    # de descer neles — sem isso, um node_modules com milhares de
+    # arquivos seria percorrido integralmente a cada chamada (a tool
+    # roda a cada iteração via memória operacional).
+    for root, dirnames, filenames in os.walk(project_path):
+        dirnames[:] = [
+            name for name in dirnames if name not in IGNORED_DIRECTORIES
+        ]
+
+        for filename in filenames:
+            full_path = Path(root) / filename
+
+            if not full_path.is_file():
+                continue
+
+            visible.append(str(full_path.relative_to(project_path)))
+
+    return visible
 
 
 definition = {

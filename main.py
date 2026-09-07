@@ -123,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         max_wait_seconds=Config.rate_limit_max_wait_seconds,
     )
     llm = LLMClient(router)
+    tools.set_tracker(llm.usage)
 
     summary = ProjectSummary()
 

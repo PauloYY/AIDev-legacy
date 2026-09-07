@@ -1,4 +1,6 @@
-from app.llm.models import LLMResponse, Message
+import time
+
+from app.llm.models import LLMResponse, Message, Usage
 from app.llm.providers.base import LLMProvider
 from app.llm.usage import UsageTracker
 
@@ -15,17 +17,42 @@ class LLMClient:
         tools: list[dict] | None = None,
         component: str | None = None,
         iteration: int | None = None,
+        context_breakdown: dict[str, dict[str, int]] | None = None,
+        attempt: int = 1,
     ) -> LLMResponse:
-
-        response = self.provider.generate(
-            messages,
-            tools,
-        )
 
         prompt_text = ""
         for msg in messages:
             if msg.content:
                 prompt_text += msg.content
+
+        start = time.monotonic()
+        try:
+            response = self.provider.generate(
+                messages,
+                tools,
+            )
+        except Exception as error:
+            duration_ms = (time.monotonic() - start) * 1000
+            # Etapa 2E: a métrica é registrada mesmo em exceção, com
+            # Usage zerado (tokens desconhecidos) + tipo do erro. Não
+            # usa usage=None para não cair no noop do record().
+            self.usage.record(
+                Usage(),
+                None,
+                component=component,
+                iteration=iteration,
+                prompt_chars=len(prompt_text),
+                completion_chars=0,
+                context_breakdown=context_breakdown,
+                duration_ms=duration_ms,
+                attempt=attempt,
+                success=False,
+                error=type(error).__name__,
+            )
+            raise
+
+        duration_ms = (time.monotonic() - start) * 1000
 
         self.usage.record(
             response.usage,
@@ -34,6 +61,12 @@ class LLMClient:
             iteration=iteration,
             prompt_chars=len(prompt_text),
             completion_chars=len(response.content or ""),
+            context_breakdown=context_breakdown,
+            duration_ms=duration_ms,
+            attempt=attempt,
+            empty_response=not (
+                response.content and response.content.strip()
+            ),
         )
 
         return response

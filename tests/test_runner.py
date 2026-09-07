@@ -91,7 +91,7 @@ class FakeSummaryUpdater:
         self.should_fail = should_fail
         self.calls = 0
 
-    def update(self, objective, project_name, task, result):
+    def update(self, objective, project_name, task, result, iteration=None):
         self.calls += 1
 
         if self.should_fail:
@@ -129,7 +129,10 @@ class FakeErrorChecklist:
     def clear(self):
         pass
 
-    def generate(self, command, output):
+    def generate(self, command, output, iteration=None):
+        pass
+
+    def note_infra_failure(self, command, reason):
         pass
 
     def render(self):
