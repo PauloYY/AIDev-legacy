@@ -1,5 +1,6 @@
 from collections import deque
 from dataclasses import dataclass
+from hashlib import sha1
 from typing import Any
 
 from app.tools.registry import ToolRegistry
@@ -171,7 +172,16 @@ class OperationalMemory:
         self._last_investigation_iteration = iteration
 
 
-    def render(self, project_name: str) -> str:
+    def render(
+        self, project_name: str, files_text: str | None = None
+    ) -> str:
+        # files_text (Etapa 4): listagem pré-computada (ex.: compacta
+        # "sem alterações"). None = comportamento legado integral.
+        files_section = (
+            files_text
+            if files_text is not None
+            else self.render_files(project_name)
+        )
         return (
             "HISTÓRICO DE AÇÕES (memória determinística — Python puro, "
             "sempre precisa, não depende da LLM lembrar):\n"
@@ -179,7 +189,7 @@ class OperationalMemory:
             f"{self.render_known_commands()}\n\n"
             "ARQUIVOS ATUAIS DO PROJETO (lista real do disco, consultada "
             "agora, não é um resumo):\n"
-            f"{self.render_files(project_name)}"
+            f"{files_section}"
         )
 
     def render_known_commands(self) -> str:
@@ -207,6 +217,96 @@ class OperationalMemory:
             return "Nenhuma ação executada ainda nesta run."
         return "\n".join(self._format_action(a) for a in self._actions)
 
+    # ---------- Etapa 5: janela de histórico com preservação ----------
+
+    # Política de janela (justificativa, não número mágico):
+    # o Planner decide a PRÓXIMA ação a partir de (a) estado atual
+    # (arquivos/summary/checklists, sempre integrais) + (b) causalidade
+    # recente (o que foi feito e o que resultou) + (c) falhas que ainda
+    # exigem correção. Cada task típica gera 1-3 registros (task +
+    # 0-2 dependencies); 8 ações ≈ 3-4 ciclos completos decidir→
+    # executar→observar, suficiente para detectar repetição imediata,
+    # entender a última mudança e o último teste. Sucessos antigos já
+    # estão materializados no estado atual (arquivos no disco, resumo,
+    # checklist marcado) — reenviá-los é duplicação. Falhas antigas
+    # fora da janela são preservadas explicitamente abaixo, porque um
+    # erro não corrigido continua relevante mesmo depois de outras
+    # ações.
+    MAX_HISTORY_RENDERED_COMPACT = 8
+    MAX_OLDER_FAILURES_KEPT = 2
+
+    def render_history_compact(self) -> str:
+        """Últimas N ações + falhas antigas preservadas (Etapa 5).
+
+        Nunca remove: ações recentes (causalidade imediata), a falha
+        mais recente fora da janela (pode explicar o estado atual) e
+        o último teste/build com falha (o que precisa ser corrigido).
+        Remove: sucessos antigos já refletidos no estado atual
+        (arquivos/resumo/checklist). Retorna também linha de omissão
+        explícita com a contagem — nunca omite silenciosamente.
+        """
+        if not self._actions:
+            return "Nenhuma ação executada ainda nesta run."
+
+        actions = list(self._actions)
+        window = actions[-self.MAX_HISTORY_RENDERED_COMPACT:]
+        older = actions[:-self.MAX_HISTORY_RENDERED_COMPACT]
+
+        lines = [self._format_action(a) for a in window]
+
+        if older:
+            # Falhas fora da janela que ainda importam: as mais
+            # recentes primeiro, priorizando run_command de teste/build
+            # (o que bloqueia finish) e depois qualquer falha.
+            older_failures = [a for a in older if not a.success]
+            kept: list = []
+            test_failures = [
+                a for a in older_failures
+                if a.tool == "run_command"
+            ]
+            for candidate in test_failures + older_failures:
+                if candidate not in kept:
+                    kept.append(candidate)
+                if len(kept) >= self.MAX_OLDER_FAILURES_KEPT:
+                    break
+            omitted = len(older) - len(kept)
+            lines.append(
+                f"... [{omitted} ação(ões) anterior(es) omitida(s): "
+                f"sucessos já refletidos no estado atual]"
+            )
+            for action in kept:
+                lines.append(
+                    f"(falha anterior preservada) "
+                    f"{self._format_action(action)}"
+                )
+
+        return "\n".join(lines)
+
+    def render_compact(
+        self, project_name: str, files_text: str | None = None
+    ) -> str:
+        """Bloco de memória compacto (Etapa 5).
+
+        Mesmas seções de render(), com histórico em janela
+        (render_history_compact). Lista de arquivos, comandos
+        conhecidos e formato geral inalterados — só o volume do
+        histórico muda. `render()` legado segue intacto.
+        """
+        files_section = (
+            files_text
+            if files_text is not None
+            else self.render_files(project_name)
+        )
+        return (
+            "HISTÓRICO DE AÇÕES (memória determinística — Python puro, "
+            "sempre precisa, não depende da LLM lembrar):\n"
+            f"{self.render_history_compact()}\n\n"
+            f"{self.render_known_commands()}\n\n"
+            "ARQUIVOS ATUAIS DO PROJETO (lista real do disco, consultada "
+            "agora, não é um resumo):\n"
+            f"{files_section}"
+        )
+
     def render_files(self, project_name: str) -> str:
         try:
             files = self.tools.execute("list_files", {"project_name": project_name})
@@ -214,7 +314,45 @@ class OperationalMemory:
             return f"Não foi possível listar os arquivos: {error}"
         if not files:
             return "(projeto vazio)"
-        files = sorted(files)
+        return self._format_listing(sorted(files))
+
+    def render_files_state(
+        self, project_name: str, last_state: str | None = None
+    ) -> tuple[str, str | None]:
+        """Listagem estrutural com detecção de mudança (Etapa 4).
+
+        Retorna (texto, estado). O estado é o hash da listagem
+        COMPLETA ordenada (content-addressed): se nada mudou desde
+        `last_state`, o texto é uma linha compacta explícita em vez
+        da lista integral — o Planner continua sabendo quantos
+        arquivos existem e que a estrutura está intacta. Mudanças de
+        CONTEÚDO com o mesmo conjunto de paths não alteram o estado
+        (a lista nunca teve conteúdos); essas chegam ao Planner via
+        resultado da task, resumo e histórico, como antes. Em erro de
+        listagem, retorna o texto de erro e estado None (força nova
+        tentativa integral na próxima vez). `render()` segue inalterado.
+        """
+
+        try:
+            files = self.tools.execute(
+                "list_files", {"project_name": project_name})
+        except Exception as error:
+            return (
+                f"Não foi possível listar os arquivos: {error}", None)
+        file_list = sorted(files) if files else []
+        state = sha1(repr(file_list).encode("utf-8")).hexdigest()
+        if last_state is not None and state == last_state:
+            return (
+                f"(sem alterações desde a última verificação — "
+                f"{len(file_list)} arquivo(s))",
+                state,
+            )
+        if not file_list:
+            return "(projeto vazio)", state
+        return self._format_listing(file_list), state
+
+    def _format_listing(self, files: list) -> str:
+        files = list(files)
         omitted = 0
         if len(files) > self.MAX_FILES_LISTED:
             omitted = len(files) - self.MAX_FILES_LISTED

@@ -348,4 +348,5 @@ tool = Tool(
     function=list_symbols,
     definition=definition,
     type=ToolType.ANALYSIS,
+    pure=True,
 )

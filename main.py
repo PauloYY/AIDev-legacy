@@ -148,7 +148,16 @@ def main(argv: list[str] | None = None) -> int:
         tools=tools,
     )
 
-    task_context_builder = TaskContextBuilder()
+    task_context_builder = TaskContextBuilder(
+        # Etapa 4: limita resultados gigantes de dependencies no contexto
+        # do Executor (veredito no início é preservado + omissão marcada).
+        # None = comportamento legado integral.
+        max_result_chars=(
+            TaskContextBuilder.DEFAULT_MAX_RESULT_CHARS
+            if Config.compact_context
+            else None
+        ),
+    )
 
     task_decision_maker = TaskDecisionMaker(
         llm=llm,

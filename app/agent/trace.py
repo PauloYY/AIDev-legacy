@@ -180,6 +180,132 @@ def default_trace_dir() -> Path:
     return Path(tempfile.gettempdir()) / "aidev-traces"
 
 
+# ---------- P6: rotação dos traces (por quantidade + tamanho total) ----------
+
+# Cada run gera um arquivo próprio (aidev-trace-<stamp>-<run_id>.jsonl),
+# então o crescimento é em Nº de arquivos, não num arquivo único. A
+# rotação aqui é poda dos mais antigos, com defaults seguros e
+# sobrescrevíveis por env (lidos a cada chamada, como default_trace_dir,
+# para permitir override em testes sem reload).
+TRACE_FILE_PREFIX = "aidev-trace-"
+TRACE_FILE_SUFFIX = ".jsonl"
+DEFAULT_TRACE_KEEP_FILES = 20
+DEFAULT_TRACE_MAX_TOTAL_MB = 50
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Env int com default seguro: ausente/inválido → default."""
+    try:
+        return int((os.getenv(name) or "").strip() or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def trace_rotation_limits() -> tuple[int, int]:
+    """(keep_files, max_total_bytes) vigentes (P6, só observa).
+
+    `AIDEV_TRACE_KEEP_FILES` (default 20) e `AIDEV_TRACE_MAX_TOTAL_MB`
+    (default 50). Ausente/inválido → default; <= 0 desativa a dimensão
+    correspondente (sem poda por ela).
+    """
+    keep = _positive_int_env(
+        "AIDEV_TRACE_KEEP_FILES", DEFAULT_TRACE_KEEP_FILES)
+    max_mb = _positive_int_env(
+        "AIDEV_TRACE_MAX_TOTAL_MB", DEFAULT_TRACE_MAX_TOTAL_MB)
+    return keep, max_mb * 1024 * 1024
+
+
+def prune_old_traces(
+    trace_dir: str | Path | None = None,
+    keep_path: str | Path | None = None,
+    keep_files: int | None = None,
+    max_total_bytes: int | None = None,
+) -> dict[str, int]:
+    """Remove traces antigos além dos limites (P6). Nunca levanta.
+
+    Mantém os `keep_files` mais recentes e garante total <=
+    `max_total_bytes` (remove os mais antigos primeiro). `keep_path`
+    (o log atual) nunca é removido. Só considera arquivos
+    `aidev-trace-*.jsonl` — nada mais no diretório é tocado. Limites
+    None → vigentes via `trace_rotation_limits()`; <= 0 desativa a
+    dimensão. Retorna {"kept", "removed", "freed_bytes"}.
+    """
+    empty = {"kept": 0, "removed": 0, "freed_bytes": 0}
+    try:
+        directory = Path(trace_dir) if trace_dir else default_trace_dir()
+        if keep_files is None or max_total_bytes is None:
+            default_keep, default_bytes = trace_rotation_limits()
+            if keep_files is None:
+                keep_files = default_keep
+            if max_total_bytes is None:
+                max_total_bytes = default_bytes
+        try:
+            keep_resolved = Path(keep_path).resolve() if keep_path else None
+        except Exception:
+            keep_resolved = None
+
+        candidates: list[tuple[float, str, Path, int]] = []
+        try:
+            entries = list(directory.iterdir())
+        except OSError:
+            return dict(empty)
+        for entry in entries:
+            try:
+                if not entry.is_file():
+                    continue
+                name = entry.name
+                if not (
+                    name.startswith(TRACE_FILE_PREFIX)
+                    and name.endswith(TRACE_FILE_SUFFIX)
+                ):
+                    continue
+                if keep_resolved is not None:
+                    try:
+                        if entry.resolve() == keep_resolved:
+                            continue
+                    except OSError:
+                        continue
+                stat = entry.stat()
+                candidates.append(
+                    (stat.st_mtime, name, entry, stat.st_size))
+            except OSError:
+                continue
+
+        # Mais recentes por último (mtime, desempate por nome).
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        removed = 0
+        freed = 0
+
+        def _drop(item: tuple[float, str, Path, int]) -> None:
+            nonlocal removed, freed
+            try:
+                item[2].unlink()
+            except OSError:
+                return
+            removed += 1
+            freed += item[3]
+
+        if keep_files is not None and keep_files > 0:
+            while len(candidates) > keep_files:
+                _drop(candidates.pop(0))
+
+        if max_total_bytes is not None and max_total_bytes > 0:
+            total = sum(item[3] for item in candidates)
+            while candidates and total > max_total_bytes:
+                victim = candidates.pop(0)
+                _drop(victim)
+                total -= victim[3]
+
+        result = dict(empty)
+        result["kept"] = len(candidates)
+        result["removed"] = removed
+        result["freed_bytes"] = freed
+        return result
+    except Exception as error:
+        logger.warning("Trace: falha ao podar traces antigos: %s", error)
+        return dict(empty)
+
+
 class ExecutionTrace:
     """Abstração mínima do trace persistente (API: `record`)."""
 
@@ -194,6 +320,13 @@ class ExecutionTrace:
         self.path = self.trace_dir / f"aidev-trace-{stamp}-{self.run_id}.jsonl"
         self._events = 0
         self._ensure_parent()
+        # P6: cada run nova poda os traces de runs anteriores além dos
+        # limites (best-effort, nunca quebra a run; o arquivo atual —
+        # ainda nem criado — é excluído da poda via keep_path).
+        try:
+            prune_old_traces(self.trace_dir, keep_path=self.path)
+        except Exception as error:
+            logger.warning("Trace: falha na rotação inicial: %s", error)
 
     def _ensure_parent(self) -> None:
         try:

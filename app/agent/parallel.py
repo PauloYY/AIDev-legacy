@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 # Tools comprovadamente sem efeitos colaterais relevantes. Qualquer
 # tool fora deste conjunto roda pelo caminho sequencial legado.
+# P4: este conjunto deve espelhar exatamente as tools padrão
+# declaradas com `pure=True` (ver app/tools/base.py e
+# `declared_pure_tool_names()` abaixo). `ToolType.ANALYSIS` NÃO é o
+# critério — run_command é ANALYSIS mas nunca entra aqui.
 PURE_READ_TOOLS = frozenset({
     "read_file",
     "list_files",
@@ -60,6 +64,21 @@ def all_pure_read(names) -> bool:
     """True se há ≥1 nome e TODOS são leitura pura."""
     names = list(names)
     return len(names) > 0 and all(is_pure_read_tool(n) for n in names)
+
+
+def declared_pure_tool_names(registry) -> set[str]:
+    """Nomes das tools registradas com `pure=True` (P4, só observa).
+
+    Usado para verificar coerência entre a declaração de cada tool e
+    `PURE_READ_TOOLS`. Não é usado no caminho quente: o gate do batch
+    continua sendo o conjunto explícito acima (não relaxar sem revisão).
+    """
+    names: set[str] = set()
+    tools = getattr(registry, "_tools", None) or {}
+    for name, tool in tools.items():
+        if bool(getattr(tool, "pure", False)):
+            names.add(name)
+    return names
 
 
 def run_concurrent(

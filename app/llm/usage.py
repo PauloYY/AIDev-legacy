@@ -235,6 +235,69 @@ class UsageTracker:
 
         return groups
 
+    # ---------- Etapa 4: agregados por componente (chamadas/contexto) ----------
+
+    def component_stats(self) -> dict[str, dict[str, Any]]:
+        """Agregados por componente LLM (Etapa 4, só observa).
+
+        Para cada componente retorna: calls, prompt_chars (sum/avg/max),
+        completion_chars (sum), prompt/completion/total_tokens REAIS do
+        provider (sum; avg de prompt), latency_ms (sum/avg/max),
+        retries (attempts > 1), empty_responses e failures. Tokens reais
+        vêm de record.usage (resposta do provider); quando o provider
+        não informa, valem 0 — nunca estimativa silenciosa.
+        """
+
+        groups: dict[str, dict[str, Any]] = {}
+        for record in self._records:
+            key = record.component or "unknown"
+            entry = groups.setdefault(key, {
+                "calls": 0,
+                "prompt_chars_sum": 0,
+                "prompt_chars_max": 0,
+                "completion_chars_sum": 0,
+                "prompt_tokens": 0,
+                "prompt_tokens_max": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "latency_ms_sum": 0.0,
+                "latency_ms_max": 0.0,
+                "retries": 0,
+                "empty_responses": 0,
+                "failures": 0,
+            })
+            entry["calls"] += 1
+            entry["prompt_chars_sum"] += record.prompt_chars or 0
+            entry["prompt_chars_max"] = max(
+                entry["prompt_chars_max"], record.prompt_chars or 0)
+            entry["completion_chars_sum"] += record.completion_chars or 0
+            ptokens = record.usage.prompt_tokens if record.usage else 0
+            entry["prompt_tokens"] += ptokens or 0
+            entry["prompt_tokens_max"] = max(
+                entry["prompt_tokens_max"], ptokens or 0)
+            entry["completion_tokens"] += (
+                record.usage.completion_tokens if record.usage else 0) or 0
+            entry["total_tokens"] += (
+                record.usage.total_tokens if record.usage else 0) or 0
+            entry["latency_ms_sum"] += record.duration_ms or 0.0
+            entry["latency_ms_max"] = max(
+                entry["latency_ms_max"], record.duration_ms or 0.0)
+            if (record.attempt or 1) > 1:
+                entry["retries"] += 1
+            if record.empty_response:
+                entry["empty_responses"] += 1
+            if not record.success:
+                entry["failures"] += 1
+
+        for entry in groups.values():
+            calls = entry["calls"] or 1
+            entry["prompt_chars_avg"] = entry["prompt_chars_sum"] // calls
+            entry["prompt_tokens_avg"] = entry["prompt_tokens"] // calls
+            entry["latency_ms_avg"] = entry["latency_ms_sum"] / calls
+            entry["latency_ms_total"] = entry.pop("latency_ms_sum")
+
+        return groups
+
     # ---------- Etapa 2E: métricas do ProjectSummaryUpdater ----------
 
     def _updater_records(self) -> list[CallRecord]:

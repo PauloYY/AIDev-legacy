@@ -218,6 +218,12 @@ definition = {
 }
 
 
+# P4: ANALYSIS aqui significa apenas "pode ser dependency" (ex.:
+# rodar testes para coletar evidência antes de agir) — NÃO significa
+# "sem efeitos colaterais". Qualquer comando shell pode mutar arquivos
+# via redirect/heredoc/etc., então run_command é sempre não-puro
+# (pure=False, o default): nunca entra em batch paralelo, mesmo para
+# comandos com cara de leitura como "--version" ou "ls".
 tool = Tool(
     name="run_command",
     function=run_command,

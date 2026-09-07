@@ -39,6 +39,40 @@ class Config:
     # paralelo; "0" força o caminho sequencial legado (reversível).
     parallel_tools = os.getenv("AIDEV_PARALLEL_TOOLS", "1") != "0"
 
+    # Etapa 4 — redução de chamadas/contexto (reversíveis p/ benchmark):
+    # - AIDEV_SMART_SUMMARY=1 pula o Summary Updater após operações de
+    #   leitura pura (não mudam o estado; descobertas seguem inline no
+    #   próximo contexto + histórico determinístico).
+    # - AIDEV_COMPACT_CONTEXT=1 limita resultados gigantes de
+    #   dependencies no contexto do Executor e usa listagem estrutural
+    #   de arquivos (só reenvia quando muda).
+    smart_summary = os.getenv("AIDEV_SMART_SUMMARY", "1") != "0"
+    compact_context = os.getenv("AIDEV_COMPACT_CONTEXT", "1") != "0"
+
+    # Etapa 6 — eficiência do Executor + SummaryUpdater (reversível):
+    # - AIDEV_COMPACT_EXECUTOR=1 usa template compacto no Executor,
+    #   limita cada resultado de dependency a 2000 chars no contexto do
+    #   Executor (Etapa 4 usava 4000; arquivos pequenos seguem
+    #   byte-idênticos) e estende os skips do SummaryUpdater para
+    #   operações comprovadamente sem mudança de estado (check_project
+    #   e run_command não-mutante e não-teste/build — o veredito segue
+    #   inline no próximo contexto + histórico + error checklist).
+    # - AIDEV_COMPACT_EXECUTOR=0 restaura o comportamento da Etapa 5.
+    #   A semântica de AIDEV_SMART_SUMMARY (Etapa 4) fica congelada.
+    compact_executor = os.getenv("AIDEV_COMPACT_EXECUTOR", "1") != "0"
+
+    # Etapa 5 — compactação inteligente do contexto do Planner
+    # (reversível p/ benchmark):
+    # - AIDEV_COMPACT_PLANNER=1 usa template estático compacto +
+    #   schemas compactos no Planner, janela de histórico recente com
+    #   preservação de falhas, e resultados compactos que preservam o
+    #   veredito (STATUS/exit code) para o Planner. O error checklist
+    #   continua gerado do resultado INTEGRAL (ver Etapa 6 para o
+    #   contexto do Executor).
+    # - AIDEV_COMPACT_PLANNER=0 restaura byte a byte o comportamento
+    #   anterior (prompt completo legado).
+    compact_planner = os.getenv("AIDEV_COMPACT_PLANNER", "1") != "0"
+
     sandbox_mode = os.getenv("AIDEV_SANDBOX_MODE", "docker").lower()
     sandbox_docker_image = os.getenv("AIDEV_SANDBOX_DOCKER_IMAGE", "aidev-sandbox:latest")
     sandbox_memory_limit = os.getenv("AIDEV_SANDBOX_MEMORY_LIMIT", "256m")

@@ -86,4 +86,5 @@ tool = Tool(
     function=list_files,
     definition=definition,
     type=ToolType.ANALYSIS,
+    pure=True,
 )

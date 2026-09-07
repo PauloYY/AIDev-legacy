@@ -194,18 +194,29 @@ def test_breakdown_preserves_multiple_iterations(tools, parser):
 
 
 # 7. A medição não altera o prompt final.
-def test_measurement_does_not_alter_final_prompt(tools, parser):
-    provider = _FakeProvider()
-    llm = LLMClient(provider)
-    planner = Planner(llm=llm, parser=parser, tools=tools)
+def test_measurement_does_not_alter_final_prompt(
+        tools, parser, monkeypatch):
+    from app.config import Config
 
     objective = "my objective"
     context = _full_context()
+
+    # Modo legado: medição não altera o prompt integral.
+    monkeypatch.setattr(Config, "compact_planner", False)
+    provider = _FakeProvider()
+    planner = Planner(llm=LLMClient(provider), parser=parser, tools=tools)
     expected = planner._build_prompt(objective, context)
     planner.plan(objective=objective, context=context, iteration=3)
+    assert provider.seen_messages[0][0].content == expected
 
-    sent = provider.seen_messages[0][0].content
-    assert sent == expected
+    # Modo compacto (Etapa 5): medição também não altera o prompt.
+    monkeypatch.setattr(Config, "compact_planner", True)
+    provider2 = _FakeProvider()
+    planner2 = Planner(
+        llm=LLMClient(provider2), parser=parser, tools=tools)
+    expected2 = planner2._build_prompt_compact(objective, context)
+    planner2.plan(objective=objective, context=context, iteration=3)
+    assert provider2.seen_messages[0][0].content == expected2
 
 
 # 8. A medição não altera a decisão do Planner.

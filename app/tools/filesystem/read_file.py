@@ -52,4 +52,5 @@ tool = Tool(
     function=read_file,
     definition=definition,
     type=ToolType.ANALYSIS,
+    pure=True,
 )

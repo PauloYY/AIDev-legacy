@@ -118,6 +118,8 @@ class Runner:
         # Observabilidade (Fase 3): trace estruturado por execução. None
         # = cria um ExecutionTrace novo a cada run(); NullTrace desativa.
         self.execution_trace = execution_trace
+        # Fase 4: estado estruturado da tarefa (recriado a cada run()).
+        self.task_state = None
 
     def _emit(self, event_type: str, **data):
         # Fase 3: contadores de performance (não alteram eventos).
@@ -135,6 +137,111 @@ class Runner:
                     data=data,
                 )
             )
+
+    # ---------- Fase 4: TaskState (atualizações centralizadas) ----------
+
+    def _init_task_state(self, objective: str):
+        """Pipeline prompt → canonical → Interpreter → TaskState.
+
+        Nunca levanta: qualquer erro (LLM, parsing) resulta num estado
+        mínimo com o prompt original — a run continua no fluxo antigo.
+        """
+        from app.agent.taskstate.canonicalizer import PromptCanonicalizer
+        from app.agent.taskstate.interpreter import TaskInterpreter
+        from app.agent.taskstate.task_state import TaskState
+
+        try:
+            text = objective if isinstance(objective, str) else str(objective)
+        except Exception:
+            text = ""
+        try:
+            planner_llm = getattr(getattr(self, "planner", None),
+                                  "llm", None)
+            canon = PromptCanonicalizer(
+                llm=planner_llm).canonicalize(text)
+            interpretation = TaskInterpreter().interpret(
+                canon.canonical_prompt, canon.language)
+            return TaskState(
+                original_prompt=canon.original_prompt,
+                canonical_prompt=canon.canonical_prompt,
+                language=canon.language,
+                translation_applied=canon.translation_applied,
+                objective=(interpretation.objective
+                           or canon.canonical_prompt[:300]),
+                requirements=interpretation.requirements,
+                constraints=interpretation.constraints,
+                ambiguities=interpretation.ambiguities,
+            )
+        except Exception as error:
+            logger.warning("TaskState inicial mínimo (falha: %s)", error)
+            try:
+                return TaskState(original_prompt=text,
+                                 canonical_prompt=text,
+                                 objective=text[:300])
+            except Exception:
+                return None
+
+    def _note_task_decision(self, iteration, decision) -> None:
+        """Planner → decisions do TaskState (compacto, sem conteúdos)."""
+        try:
+            state = getattr(self, "task_state", None)
+            if state is None or decision is None:
+                return
+            action = getattr(decision.action, "value", str(
+                decision.action))
+            tool = file_path = summary = None
+            task = getattr(decision, "task", None)
+            if task is not None:
+                tool = getattr(task, "tool", None)
+                try:
+                    file_path = extract_file_path(
+                        getattr(task, "arguments", None))
+                except Exception:
+                    file_path = None
+                try:
+                    n_deps = len(getattr(task, "dependencies", None) or [])
+                except Exception:
+                    n_deps = 0
+                summary = f"tool={tool} deps={n_deps}"
+            else:
+                text = (getattr(decision, "content", None)
+                        or getattr(decision, "reason", None) or "")
+                summary = str(text)[:200]
+            state.record_decision(iteration, action, tool, file_path,
+                                  summary)
+        except Exception as error:
+            logger.warning("TaskState decision falhou: %s", error)
+
+    def _note_task_progress(self, iteration, tool, arguments, result,
+                            success) -> None:
+        """Executor → progress do TaskState (1 linha por execução)."""
+        try:
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return
+            try:
+                file_path = extract_file_path(arguments)
+            except Exception:
+                file_path = None
+            try:
+                note = str(result).lstrip().split("\n", 1)[0][:200]
+            except Exception:
+                note = ""
+            state.record_progress(iteration, tool, success, file_path,
+                                  note)
+        except Exception as error:
+            logger.warning("TaskState progress falhou: %s", error)
+
+    def _note_state_verification(self, gate, passed, detail,
+                                 iteration) -> None:
+        """Finish gates → verification do TaskState."""
+        try:
+            state = getattr(self, "task_state", None)
+            if state is None:
+                return
+            state.record_verification(gate, passed, detail, iteration)
+        except Exception as error:
+            logger.warning("TaskState verification falhou: %s", error)
 
     def _note_test_run(self, tool: str, arguments: dict, succeeded: bool) -> None:
         """Conta execuções de teste/build (Fase 3, só métrica)."""
@@ -333,18 +440,18 @@ class Runner:
             dependency=True,
         )
 
-        return (
-            f"{context}\n\n"
+        return self._append_context_error(
+            context,
             "INVESTIGAÇÃO REALIZADA COMO ÚLTIMO RECURSO (você insistiu "
             f"em usar '{tool_name}' como task principal mesmo após "
             "vários avisos — em vez de travar a run, a investigação foi "
             "executada por você desta vez):\n\n"
             f"{tool_name}({task.arguments}) ->\n"
-            f"{self._truncate(result)}\n\n"
+            f"{self._truncate_for_planner(result)}\n\n"
             "Isso NÃO é permissão geral: continue anexando "
             "read_file/list_files/find_references como dependency da "
             "ação real, exceto logo após um teste/build falhar. Agora "
-            "escolha a próxima AÇÃO REAL usando essa informação."
+            "escolha a próxima AÇÃO REAL usando essa informação.",
         )
 
     def _command_succeeded(self, tool: str, result) -> bool:
@@ -427,6 +534,16 @@ class Runner:
             return
 
         if succeeded:
+            # Fase 4: testes verdes com problemas abertos = correção
+            # confirmada por execução real (não por autoavaliação).
+            try:
+                state = getattr(self, "task_state", None)
+                if state is not None and state.open_problems:
+                    state.resolve_problems(iteration)
+                    state.record_correction(
+                        f"tests green: {command[:120]}", iteration)
+            except Exception as error:
+                logger.warning("TaskState correction falhou: %s", error)
             self.error_checklist.clear()
             return
 
@@ -443,6 +560,16 @@ class Runner:
                 else "falhou por erro de infraestrutura"
             )
             self.error_checklist.note_infra_failure(command, reason)
+            # Fase 4: infra também é problema (não bloqueia geração
+            # futura de itens reais).
+            try:
+                state = getattr(self, "task_state", None)
+                if state is not None:
+                    state.record_problem(
+                        f"infra failure: {command[:120]} ({reason})",
+                        kind="infra", iteration=iteration)
+            except Exception as error:
+                logger.warning("TaskState problem falhou: %s", error)
             return
 
         try:
@@ -454,6 +581,18 @@ class Runner:
             logger.warning(
                 "Falha ao gerar checklist de erros: %s", error
             )
+        # Fase 4: espelha os itens extraídos como problemas observados
+        # (descrições curtas; detalhe segue no error checklist).
+        try:
+            state = getattr(self, "task_state", None)
+            if state is not None:
+                items = getattr(self.error_checklist, "_items", None) or []
+                for item in items:
+                    state.record_problem(
+                        getattr(item, "description", ""),
+                        kind="test_failure", iteration=iteration)
+        except Exception as error:
+            logger.warning("TaskState problem falhou: %s", error)
 
     def _is_mutating(self, tool: str, arguments: dict) -> bool:
         if tool == "write_file":
@@ -465,6 +604,46 @@ class Runner:
             )
 
         return False
+
+    def _summary_skip_reason(
+        self, tool: str, arguments: dict
+    ) -> str | None:
+        """Motivo do skip do SummaryUpdater, ou None se deve atualizar.
+
+        Etapa 4 (congelada, só AIDEV_SMART_SUMMARY): leitura pura.
+        Etapa 6 (só AIDEV_COMPACT_EXECUTOR): operações comprovadamente
+        sem mudança de estado — check_project (análise estática, o
+        veredito já vai ao Planner via resultado + finish gate) e
+        run_command que nem muta (MUTATION_PATTERNS) nem é teste/build
+        (ex.: --version, ls; sem sinal de teste para o resumo). Tudo o
+        que muda estado (write_file, run_command mutante, teste/build)
+        atualiza normalmente. Nunca fabrica resumo: pular = manter o
+        vigente.
+        """
+        if Config.smart_summary and (tool in self.READ_ONLY_TOOLS):
+            return "read_only_no_state_change"
+
+        if not bool(getattr(Config, "compact_executor", False)):
+            return None
+
+        if tool == "check_project":
+            return "analysis_no_state_change"
+
+        if tool == "run_command" and isinstance(arguments, dict):
+            command = str(arguments.get("command", ""))
+            if self._is_mutating(tool, arguments):
+                return None
+            try:
+                is_test_build = (
+                    self.operational_memory.is_test_or_build_command(
+                        command)
+                )
+            except Exception:
+                is_test_build = False
+            if not is_test_build:
+                return "inspect_no_state_change"
+
+        return None
 
     def _truncate(self, text) -> str:
         text = str(text)
@@ -479,7 +658,121 @@ class Runner:
             f"...[truncado, {omitted} caracteres omitidos]"
         )
 
-    def _build_memory_block(self, project_name: str, summary: str) -> str:
+    # ---------- Etapa 5: compactação p/ o Planner (veredito primeiro) ----------
+
+    # Planner precisa do VEREDITO, não do log integral: exit code,
+    # STATUS, falhas e arquivos envolvidos. O resultado INTEGRAL segue
+    # disponível onde importa — error checklist (gerado do integral,
+    # Etapa 4), histórico determinístico (resumo) e Executor (cap 4000
+    # da Etapa 4). Aqui só o que vai no prompt do Planner encolhe.
+    MAX_COMPACT_RESULT_CHARS = 2000
+    MAX_COMPACT_SUMMARY_CHARS = 2000
+    # Cauda de blocos de erro acumulados no `context` (finish blocks,
+    # loops, repetições): sem teto, 10 finishs bloqueados = dezenas de
+    # KB reenviados a cada decisão. 2 blocos ≈ erro atual + anterior;
+    # o estado que os gerou segue no error checklist / memória.
+    MAX_ERROR_TAIL_BLOCKS = 2
+
+    def _truncate_compact(self, text) -> str:
+        """Head+tail com veredito preservado (Etapa 5).
+
+        Mantém o início (STATUS na 1ª linha do run_command, header
+        TASK PAI no task_context) e o fim (resumo do pytest, traceback
+        final, última falha) — o meio omitido é log verboso. Marca a
+        omissão com o total, nunca silenciosa. Textos <= 2000 voltam
+        intactos (byte-idênticos ao legado).
+        """
+        text = str(text)
+        limit = self.MAX_COMPACT_RESULT_CHARS
+        if len(text) <= limit:
+            return text
+        head = 800
+        tail = 1000
+        omitted = len(text) - head - tail
+        return (
+            f"{text[:head]}\n"
+            f"...[compactado, {omitted} caracteres omitidos]\n"
+            f"{text[-tail:]}"
+        )
+
+    def _truncate_for_planner(self, text) -> str:
+        """Truncamento conforme a flag Etapa 5 (nunca silencioso).
+
+        Flag off: _truncate legado (head 4000). Flag on: _truncate_compact
+        (head 800 + tail 1000, veredito preservado). Textos pequenos são
+        byte-idênticos nos dois modos.
+        """
+        if bool(getattr(Config, "compact_planner", False)):
+            try:
+                return self._truncate_compact(text)
+            except Exception as error:
+                logger.warning(
+                    "Truncamento compacto falhou (usando legado): %s",
+                    error,
+                )
+        return self._truncate(text)
+
+    def _truncate_summary_compact(self, summary) -> str:
+        """Resumo narrativo capped (Etapa 5): head + marcador."""
+        text = str(summary or "")
+        limit = self.MAX_COMPACT_SUMMARY_CHARS
+        if len(text) <= limit:
+            return text
+        omitted = len(text) - limit
+        return (
+            f"{text[:limit]}\n"
+            f"...[resumo compactado, {omitted} caracteres omitidos]"
+        )
+
+    def _append_context_error(self, context: str, block: str) -> str:
+        """Anexa bloco de erro ao contexto com teto de cauda (Etapa 5).
+
+        Legado (flag off): concatenação pura, como antes.
+        Compacto: mantém no máximo MAX_ERROR_TAIL_BLOCKS blocos de
+        erro na cauda — o mais antigo além do teto é descartado, com
+        marcador explícito. Blocos considerados: ERRO DE *,
+        CORREÇÃO DA TENTATIVA, ERRO REPETIDO, INVESTIGAÇÃO REALIZADA.
+        """
+        context = str(context or "")
+        block = str(block or "")
+        if not bool(getattr(Config, "compact_planner", False)):
+            return f"{context}\n\n{block}" if context else block
+        combined = f"{context}\n\n{block}" if context else block
+        markers = (
+            "\n\nERRO DE ",
+            "\n\nCORREÇÃO DA TENTATIVA",
+            "\n\nERRO REPETIDO",
+            "\n\nINVESTIGAÇÃO REALIZADA",
+        )
+        # Localiza todos os inícios de bloco de erro na cauda.
+        starts: list[int] = []
+        for marker in markers:
+            pos = 0
+            while True:
+                idx = combined.find(marker, pos)
+                if idx == -1:
+                    break
+                # +2 pula os "\n\n" para o índice do conteúdo.
+                starts.append(idx + 2)
+                pos = idx + 2
+        starts.sort()
+        if len(starts) <= self.MAX_ERROR_TAIL_BLOCKS:
+            return combined
+        # Descarta os mais antigos além do teto, preservando o prefixo
+        # (memória/resultado) antes do primeiro bloco mantido.
+        keep_from = starts[-(self.MAX_ERROR_TAIL_BLOCKS):][0]
+        dropped = len(starts) - self.MAX_ERROR_TAIL_BLOCKS
+        prefix = combined[:starts[0]]
+        tail = combined[keep_from:]
+        return (
+            f"{prefix}"
+            f"...[{dropped} bloco(s) de erro anterior(es) omitido(s)]\n\n"
+            f"{tail}"
+        )
+
+    def _build_memory_block(
+        self, project_name: str, summary: str, files_text: str | None = None
+    ) -> str:
         """Monta o bloco de contexto sempre injetado a cada iteração.
 
         Combina o RESUMO DO PROJETO (gerado por LLM, pode ficar impreciso),
@@ -491,9 +784,21 @@ class Runner:
         gerados em Python puro por `OperationalMemory`). Os últimos três
         servem como fonte de verdade caso o resumo tenha esquecido ou
         distorcido algo.
+
+        files_text (Etapa 4): seção de arquivos pré-computada (ex.:
+        linha compacta "sem alterações"). None = listagem integral.
         """
 
         error_block = self.error_checklist.render()
+
+        # files_text=None = listagem integral (legado + doubles sem o
+        # parâmetro novo). Só repassa o override quando houver um.
+        if files_text is None:
+            operational_text = self.operational_memory.render(
+                project_name)
+        else:
+            operational_text = self.operational_memory.render(
+                project_name, files_text)
 
         return (
             f"RESUMO DO PROJETO:\n"
@@ -501,8 +806,123 @@ class Runner:
             f"{self.checklist.render()}\n\n"
             + (f"{error_block}\n\n" if error_block else "")
             + f"{self.planner_error_memory.render()}\n\n"
-            + f"{self.operational_memory.render(project_name)}"
+            + f"{operational_text}"
         )
+
+    def _build_memory_block_compact(
+        self, project_name: str, summary: str, files_text: str | None = None
+    ) -> str:
+        """Bloco de memória compacto p/ o Planner (Etapa 5).
+
+        Mesmas seções do legado (resumo, checklist, erros, memória),
+        com: resumo capped em 2000 (head), histórico em janela de 8 +
+        falhas preservadas, erros proibidos nos últimos 5. Checklist
+        do objetivo e de erros vão integrais (pequenos e decisivos).
+        Doubles legados sem render_compact caem para o legado.
+        """
+        error_block = self.error_checklist.render()
+
+        render_compact_fn = getattr(
+            self.operational_memory, "render_compact", None)
+        if files_text is None:
+            if render_compact_fn is not None:
+                try:
+                    operational_text = render_compact_fn(project_name)
+                except TypeError:
+                    operational_text = self.operational_memory.render(
+                        project_name)
+            else:
+                operational_text = self.operational_memory.render(
+                    project_name)
+        else:
+            if render_compact_fn is not None:
+                try:
+                    operational_text = render_compact_fn(
+                        project_name, files_text)
+                except TypeError:
+                    operational_text = self.operational_memory.render(
+                        project_name, files_text)
+            else:
+                try:
+                    operational_text = self.operational_memory.render(
+                        project_name, files_text)
+                except TypeError:
+                    operational_text = self.operational_memory.render(
+                        project_name)
+
+        render_err_fn = getattr(
+            self.planner_error_memory, "render_compact", None)
+        if render_err_fn is not None:
+            try:
+                planner_errors_text = render_err_fn()
+            except Exception:
+                planner_errors_text = self.planner_error_memory.render()
+        else:
+            planner_errors_text = self.planner_error_memory.render()
+
+        return (
+            f"RESUMO DO PROJETO:\n"
+            f"{self._truncate_summary_compact(summary)}\n\n"
+            f"{self.checklist.render()}\n\n"
+            + (f"{error_block}\n\n" if error_block else "")
+            + f"{planner_errors_text}\n\n"
+            + f"{operational_text}"
+        )
+
+    def _build_memory_block_tracked(
+        self, project_name: str, summary: str
+    ) -> str:
+        """Bloco de memória com listagem estrutural (Etapa 4).
+
+        Quando AIDEV_COMPACT_CONTEXT=1, a lista integral de arquivos só
+        é reenviada se a estrutura mudou desde a última verificação
+        (hash da listagem, mantido em `self._file_list_state` e zerado
+        por run); senão vai uma linha explícita "sem alterações".
+        Comportamento legado caso contrário. Nunca altera decisões —
+        só o volume reenviado.
+
+        Etapa 5: resolvida a listagem (Etapa 4), escolhe o bloco
+        compacto ou o integral conforme AIDEV_COMPACT_PLANNER.
+        Doubles legados sem os métodos novos caem para o legado.
+        """
+
+        use_compact = bool(getattr(Config, "compact_planner", False))
+
+        def _block(project_name: str, summary: str, files_text=None) -> str:
+            if use_compact:
+                try:
+                    if files_text is None:
+                        return self._build_memory_block_compact(
+                            project_name, summary)
+                    return self._build_memory_block_compact(
+                        project_name, summary, files_text)
+                except Exception as error:
+                    logger.warning(
+                        "Bloco compacto falhou (usando integral): %s",
+                        error,
+                    )
+            if files_text is None:
+                return self._build_memory_block(project_name, summary)
+            try:
+                return self._build_memory_block(
+                    project_name, summary, files_text)
+            except TypeError:
+                return self._build_memory_block(project_name, summary)
+
+        if not Config.compact_context:
+            return _block(project_name, summary)
+        render_state_fn = getattr(
+            self.operational_memory, "render_files_state", None)
+        if render_state_fn is None:
+            # Doubles legados sem o método novo: listagem integral.
+            return _block(project_name, summary)
+        last_state = getattr(self, "_file_list_state", None)
+        files_text, new_state = (
+            self.operational_memory.render_files_state(
+                project_name, last_state)
+        )
+        self._file_list_state = new_state
+        return _block(project_name, summary, files_text)
 
     def _note_tool_execution(self, tool_name: str) -> None:
         """Invalida o cache do finish-check após escrita/efeito (Fase 3).
@@ -653,6 +1073,9 @@ class Runner:
         self._stats = AgentStats()
         self._finish_check_cache = self._FINISH_CHECK_MISS
         self._last_final_verification_status = "not_run"
+        # Etapa 4: estado da listagem estrutural (hash da última
+        # listagem enviada ao Planner). Zerado por run.
+        self._file_list_state = None
         run_start = time.monotonic()
 
         # Fase 3 (trace): um arquivo JSONL próprio por execução. Nunca
@@ -693,6 +1116,17 @@ class Runner:
         self.checklist.reset()
         self.error_checklist.reset()
         self.planner_error_memory.reset()
+        # Fase 4: pipeline prompt → canonicalização → Interpreter →
+        # TaskState. Infraestrutura inicial: o estado é construído,
+        # mantido e auditado (trace), mas NÃO é injetado nos prompts
+        # do Planner/Executor nesta fase — o fluxo atual recebe o
+        # `objective` original, como antes (migração futura).
+        self.task_state = self._init_task_state(objective)
+        try:
+            trace.record("task_state_init",
+                         state=self.task_state.to_dict())
+        except Exception as error:
+            logger.warning("Trace do TaskState falhou: %s", error)
 
         try:
             self.checklist.generate(objective)
@@ -705,7 +1139,7 @@ class Runner:
             )
 
         context = (
-            f"{self._build_memory_block(project_name, summary)}\n\n"
+            f"{self._build_memory_block_tracked(project_name, summary)}\n\n"
             f"{context}"
         )
 
@@ -1030,6 +1464,9 @@ class Runner:
                         checklist_progress=decision.checklist_progress,
                     )
 
+                # Fase 4: decisão válida → TaskState (observação pura).
+                self._note_task_decision(iteration, decision)
+
                 break
 
             marked = self.checklist.mark_done(decision.checklist_progress)
@@ -1046,6 +1483,11 @@ class Runner:
                     gate="check_project",
                     passed=check_error is None,
                 )
+                # Fase 4: veredicto do gate → TaskState.
+                self._note_state_verification(
+                    "check_project", check_error is None,
+                    str(check_error)[:200] if check_error else "",
+                    iteration)
 
                 if check_error:
                     self._emit(
@@ -1056,15 +1498,15 @@ class Runner:
                         ),
                     )
 
-                    context = (
-                        f"{context}\n\n"
+                    context = self._append_context_error(
+                        context,
                         f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
                         "Você tentou finalizar, mas a checagem "
                         "check_project encontrou problemas que "
                         "precisam ser corrigidos antes:\n\n"
-                        f"{self._truncate(check_error)}\n\n"
+                        f"{self._truncate_for_planner(check_error)}\n\n"
                         "Corrija os problemas acima antes de tentar "
-                        "finalizar novamente."
+                        "finalizar novamente.",
                     )
 
                     task_history.clear()
@@ -1091,6 +1533,10 @@ class Runner:
                     passed=error_pending == 0,
                     pending_count=error_pending,
                 )
+                self._note_state_verification(
+                    "error_checklist", error_pending == 0,
+                    f"{error_pending} pending" if error_pending else "",
+                    iteration)
 
                 if self.error_checklist.pending_count:
                     error_block = self.error_checklist.render()
@@ -1104,15 +1550,15 @@ class Runner:
                         ),
                     )
 
-                    context = (
-                        f"{context}\n\n"
+                    context = self._append_context_error(
+                        context,
                         f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
                         "Você tentou finalizar, mas o último "
                         "teste/build rodado ainda está falhando:\n\n"
-                        f"{self._truncate(error_block)}\n\n"
+                        f"{self._truncate_for_planner(error_block)}\n\n"
                         "Corrija essas falhas e rode o teste/build de "
                         "novo, confirmando que ele passa, antes de "
-                        "tentar finalizar de novo."
+                        "tentar finalizar de novo.",
                     )
 
                     task_history.clear()
@@ -1148,6 +1594,12 @@ class Runner:
                     gate="final_verification",
                     passed=final_check_error is None,
                 )
+                self._note_state_verification(
+                    "final_verification",
+                    final_check_error is None,
+                    str(final_check_error)[:200]
+                    if final_check_error else "",
+                    iteration)
 
                 if final_check_error:
                     self._emit(
@@ -1158,15 +1610,15 @@ class Runner:
                         ),
                     )
 
-                    context = (
-                        f"{context}\n\n"
+                    context = self._append_context_error(
+                        context,
                         f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
                         "Você tentou finalizar, mas a verificação "
                         "final do projeto encontrou problemas que "
                         "precisam ser corrigidos antes:\n\n"
-                        f"{self._truncate(final_check_error)}\n\n"
+                        f"{self._truncate_for_planner(final_check_error)}\n\n"
                         "Corrija os problemas acima antes de tentar "
-                        "finalizar novamente."
+                        "finalizar novamente.",
                     )
 
                     task_history.clear()
@@ -1313,7 +1765,7 @@ class Runner:
                         "repetidas sem produzir progresso."
                     )
                     tasks_desc = "\n".join(
-                        f"- tool={tool}, args={self._truncate(args)}"
+                        f"- tool={tool}, args={self._truncate_for_planner(args)}"
                         for tool, args in (loop_signatures or [])
                     )
                     detail = (
@@ -1335,11 +1787,11 @@ class Runner:
                     detail=truncate_text(error, 500),
                 )
 
-                context = (
-                    f"{context}\n\n"
+                context = self._append_context_error(
+                    context,
                     f"ERRO DE REPETIÇÃO/ESTAGNAÇÃO:\n"
                     f"{error}\n\n"
-                    f"{detail}"
+                    f"{detail}",
                 )
 
                 task_history.clear()
@@ -1712,17 +2164,17 @@ class Runner:
                     detail=truncate_text(error, 500),
                 )
 
-                context = (
-                    f"{context}\n\n"
+                context = self._append_context_error(
+                    context,
                     f"ERRO DE REPETIÇÃO:\n"
                     f"{error}\n\n"
                     f"Tool: {execution.tool}\n"
-                    f"Argumentos: {self._truncate(execution.arguments)}\n\n"
+                    f"Argumentos: {self._truncate_for_planner(execution.arguments)}\n\n"
                     "Essa exata operação já foi executada com sucesso "
                     "antes; refazê-la é inútil, as mudanças já existem. "
                     "Verifique o estado atual (list_files/read_file) e "
                     "escolha a próxima ação realmente necessária, ou use "
-                    "finish caso o objetivo já tenha sido concluído."
+                    "finish caso o objetivo já tenha sido concluído.",
                 )
 
                 task_history.clear()
@@ -1818,15 +2270,49 @@ class Runner:
                 execution_succeeded,
                 iteration,
             )
+            # Fase 4: execução principal → progress do TaskState.
+            self._note_task_progress(
+                iteration, execution.tool, execution.arguments,
+                result, execution_succeeded)
 
             try:
-                summary = self.project_summary_updater.update(
-                    objective=objective,
-                    project_name=project_name,
-                    task=task,
-                    result=result,
-                    iteration=iteration,
+                skip_reason = self._summary_skip_reason(
+                    execution.tool, execution.arguments
                 )
+                if skip_reason is not None:
+                    # Etapa 4 (reads) + Etapa 6 (análise/inspeção sem
+                    # mudança de estado): nada a incorporar ao resumo
+                    # narrativo. A evidência segue disponível no próximo
+                    # contexto (RESULTADO inline), no histórico e — para
+                    # teste/build — no error checklist, que já foi
+                    # atualizado acima com o resultado INTEGRAL. `summary`
+                    # local equivale ao armazenado (toda atualização
+                    # bem-sucedida o reatribui; falha aborta a run).
+                    # Nenhum texto é fabricado: pular ≠ resumir.
+                    self._stats.summary_skipped += 1
+                    trace.record(
+                        "summary_skipped",
+                        iteration=iteration,
+                        tool=execution.tool,
+                        reason=skip_reason,
+                        file_path=extract_file_path(
+                            execution.arguments),
+                    )
+                else:
+                    summary = self.project_summary_updater.update(
+                        objective=objective,
+                        project_name=project_name,
+                        task=task,
+                        result=result,
+                        iteration=iteration,
+                    )
+                    trace.record(
+                        "summary_updated",
+                        iteration=iteration,
+                        tool=execution.tool,
+                        file_path=extract_file_path(
+                            execution.arguments),
+                    )
             except Exception as error:
                 error_type, error_sig = error_type_and_signature(error)
                 trace.record(
@@ -1839,16 +2325,12 @@ class Runner:
                 )
                 raise
 
-            trace.record(
-                "summary_updated",
-                iteration=iteration,
-                tool=execution.tool,
-                file_path=extract_file_path(execution.arguments),
-            )
-
+            # Etapa 5: o Planner recebe task_context + resultado em
+            # versão compacta (veredito preservado); Executor e error
+            # checklist já usaram os valores integrais acima.
             context = (
-                f"{self._build_memory_block(project_name, summary)}\n\n"
-                f"{self._truncate(task_context)}\n\n"
+                f"{self._build_memory_block_tracked(project_name, summary)}\n\n"
+                f"{self._truncate_for_planner(task_context)}\n\n"
                 f"RESULTADO DA EXECUÇÃO:\n"
-                f"{self._truncate(result)}"
+                f"{self._truncate_for_planner(result)}"
             )

@@ -36,18 +36,50 @@ class Planner:
         iteration: int | None = None,
         request_type: str = "normal",
     ) -> Decision:
-        """Decisão normal do Planner (prompt completo). Inalterado."""
+        """Decisão normal do Planner.
 
-        prompt = self._build_prompt(
-            objective,
-            context,
-        )
+        Legado: prompt completo via _build_prompt().
+        Etapa 5 (AIDEV_COMPACT_PLANNER=1): prompt compacto via
+        _build_prompt_compact() — mesmo objetivo, mesmas regras
+        essenciais e mesmas tools, com representação mais curta.
+        Short repair nunca passa por aqui (usa plan_with_prompt).
+        """
+
+        from app.config import Config
+
+        use_compact = bool(getattr(Config, "compact_planner", False))
+        if use_compact:
+            try:
+                prompt = self._build_prompt_compact(
+                    objective,
+                    context,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Falha no prompt compacto do Planner "
+                    "(usando prompt completo): %s",
+                    error,
+                )
+                use_compact = False
+                prompt = self._build_prompt(
+                    objective,
+                    context,
+                )
+        else:
+            prompt = self._build_prompt(
+                objective,
+                context,
+            )
 
         # Etapa 2B: instrumentação observacional — mede cada componente
         # do prompt sem alterar conteúdo, ordem ou decisão.
         context_breakdown = None
         try:
-            sections = self.build_prompt_sections(objective, context)
+            if use_compact:
+                sections = self.build_compact_prompt_sections(
+                    objective, context)
+            else:
+                sections = self.build_prompt_sections(objective, context)
             context_breakdown = self.measure_prompt_sections(sections)
         except Exception as error:
             # A medição nunca pode quebrar o Planner.
@@ -170,8 +202,20 @@ class Planner:
     MAX_REPAIR_ERROR_CHARS = 500
 
     def full_prompt_chars(self, objective: str, context: str) -> int:
-        """Tamanho aproximado do prompt completo (só mede, p/ o trace)."""
+        """Tamanho aproximado do prompt completo (só mede, p/ o trace).
+
+        Etapa 5: mede o que será realmente enviado — prompt compacto
+        quando AIDEV_COMPACT_PLANNER=1, legado caso contrário.
+        """
         try:
+            from app.config import Config
+
+            if bool(getattr(Config, "compact_planner", False)):
+                try:
+                    return len(self._build_prompt_compact(
+                        objective or "", context or ""))
+                except Exception:
+                    pass
             return len(self._build_prompt(objective or "", context or ""))
         except Exception:
             return 0
@@ -572,3 +616,186 @@ CURRENT CONTEXT:
         self._cached_tools_context = result
         self._cached_tools_names = names
         return result
+
+    # ---------- Etapa 5: compactação inteligente do Planner ----------
+
+    # Tetos do schema compacto (mais agressivos que _compact_tool_schema,
+    # que usa 300/160 para hints de repair). O validador continua usando
+    # os schemas INTEGRAIS — o prompt só precisa do suficiente para
+    # gerar uma decisão válida: nome, required, nomes/tipos dos args e
+    # a distinção entre tools. Regras de uso (quando validar, o que
+    # evitar) vivem no template estático, não na descrição da tool
+    # (deduplicação: run_command/check_project/list_symbols repetiam o
+    # mesmo conselho nos dois lugares).
+    COMPACT_TOOL_DESC_CHARS = 150
+    COMPACT_TOOL_PROP_CHARS = 80
+
+    def _build_tools_context_compact(self) -> str:
+        """Schemas mínimos das tools (nome, required, props, desc curta).
+
+        Reutiliza a mesma ideia de _compact_tool_schema() (Etapa 2),
+        com tetos menores. Nunca remove nome/required/tipos/diferenças
+        entre tools. O cache é separado do contexto integral.
+        """
+        names = tuple(sorted(self.tools._tools.keys()))
+        cached = getattr(self, "_cached_compact_tools_context", None)
+        cached_names = getattr(self, "_cached_compact_tools_names", ())
+        if cached is not None and cached_names == names:
+            return cached
+
+        compact_defs: list[dict] = []
+        for tool_name in names:
+            try:
+                definition = self.tools.get(tool_name).definition
+                function = definition.get("function", {})
+                params = function.get("parameters", {})
+                properties = params.get("properties", {}) or {}
+                compact_props: dict[str, str] = {}
+                for key, spec in properties.items():
+                    if isinstance(spec, dict):
+                        prop_type = str(spec.get("type", ""))
+                        prop_desc = str(spec.get("description") or "")
+                        # "type + essencial da descrição" cabe em 80 chars
+                        # e preserva o tipo (obrigatório p/ decisão válida).
+                        text = (
+                            f"{prop_type}: {prop_desc}"
+                            if prop_desc else prop_type
+                        )
+                    else:
+                        text = str(spec)
+                    compact_props[key] = text[:self.COMPACT_TOOL_PROP_CHARS]
+                compact_defs.append({
+                    "name": function.get("name", tool_name),
+                    "description": str(
+                        function.get("description", "")
+                    )[:self.COMPACT_TOOL_DESC_CHARS],
+                    "required": params.get("required", []),
+                    "properties": compact_props,
+                })
+            except Exception:
+                # Tool ilegível nunca pode quebrar o Planner: cai para
+                # o schema integral dessa tool.
+                try:
+                    compact_defs.append(
+                        self.tools.get(tool_name).definition)
+                except Exception:
+                    continue
+
+        # Sem indentação: a LLM lê JSON corrido sem perda; economiza
+        # ~20% de whitespace repetido a cada chamada do Planner.
+        result = json.dumps(
+            compact_defs, ensure_ascii=False, separators=(",", ":"))
+        self._cached_compact_tools_context = result
+        self._cached_compact_tools_names = names
+        return result
+
+    def build_compact_prompt_sections(
+        self,
+        objective: str | None,
+        context: str | None,
+    ) -> dict[str, str]:
+        """Decompõe o prompt COMPACTO como build_prompt_sections faz.
+
+        Mesmas chaves; static_template aqui é _build_prompt_compact().
+        Só observação — nunca altera o prompt enviado.
+        """
+        from app.agent.planning.prompt_sections import split_planner_context
+
+        if objective is None:
+            objective_text = ""
+        elif isinstance(objective, str):
+            objective_text = objective
+        else:
+            objective_text = str(objective)
+
+        if context is None:
+            context_text = ""
+        elif isinstance(context, str):
+            context_text = context
+        else:
+            context_text = str(context)
+
+        static_template_text = self._build_prompt_compact("", "")
+
+        dynamic = split_planner_context(context_text)
+
+        sections: dict[str, str] = {
+            "static_template": static_template_text,
+            "objective": objective_text,
+        }
+        sections.update(dynamic)
+        return sections
+
+    def _build_prompt_compact(
+        self,
+        objective: str,
+        context: str,
+    ) -> str:
+        """Template estático compacto (Etapa 5).
+
+        Compactação SEMÂNTICA, não truncamento: cada seção do prompt
+        integral tem um correspondente aqui com as mesmas regras
+        normativas, em menos palavras. Preserva obrigatoriamente:
+        formato de resposta (só JSON), tools disponíveis, limites das
+        tools (dependency-only + exceções + investigation flag),
+        checklist_progress, error checklist bloqueando finish,
+        coerência (não inventar nomes, confirmar via dependencies,
+        estado atual > resumo), validação antes do finish
+        (run_command real, comandos por linguagem, Gradle sem wrapper,
+        package.json antes de npm install/test, sem servidores,
+        corrigir após falha sem repetir comando, stdin) e condições
+        de finalização (finish só após validação real, fail só se
+        impossível). Exemplos redundantes e repetições entre
+        descrição de tool e template foram removidos (a distinção
+        entre tools vive nos schemas compactos acima).
+        """
+
+        return f"""You are the PLANNER of an autonomous software development agent. Choose the NEXT action to achieve the objective.
+
+RULES:
+- Return ONLY valid JSON.
+- One task = one action; dependencies gather info first and use only analysis tools.
+- "read_file", "list_files", "find_references" are investigation tools: only inside "dependencies", never as standalone task. To edit a file, attach read_file as a dependency of the write_file/run_command task.
+- EXCEPTION: after a failed "run_command" test/build you MAY use them alone to investigate the breakage. ANOTHER EXCEPTION: objective is pure analysis (no code changes) — then add "investigation": true to the task, e.g. {{"action": "task", "task": {{"tool": "read_file", "arguments": {{...}}, "investigation": true}}}} (rejected without it).
+- Attach all needed reads at once as multiple dependencies. For large args (write_file "content") describe briefly what to do — the EXECUTOR writes the full content.
+
+PROGRESS:
+- Consider everything already executed. Never repeat a completed task or the same tool+args without justification from new evidence.
+- On failure, use the error for the next step; each task must bring real progress. "investigation": true tasks are read-only (no stagnation count) but do not investigate forever — act, finish or fail.
+- Before importing from another file, confirm the exact exported name with list_symbols. If the objective is done, "finish"; "fail" only when impossible.
+
+OBJECTIVE CHECKLIST:
+- Context has a fixed numbered CHECKLIST; follow pending items in order. When the decided task completes items, add "checklist_progress": [ids] ("task"/"finish"/"fail"). Only mark truly done work, not plans. Checklist guides — real project state wins over it.
+
+ERROR CHECKLIST:
+- CURRENT ERROR CHECKLIST lists concrete failures from the last failed test/build run_command. Fix these before new objective items. It clears itself when tests pass; never claim fixed without re-running. While any item exists, "finish" is blocked.
+
+PROJECT COHERENCE:
+- Keep existing names/interfaces; never invent classes/functions/params. Confirm definitions via dependencies when needed. Current project state beats old summary text.
+
+VALIDATION BEFORE FINISH:
+- Writing code is not proof. Before "finish", run the program/tests/build with run_command (python main.py, python -m pytest -q, npm test/build, node app.js, gcc/go/cargo/ruby/php/mvn/gradle equivalents; Gradle: use "gradle", NEVER "./gradlew" — no network).
+- Node: create "package.json" BEFORE "npm install"/"npm test". Never run servers that do not terminate (npm start, flask run) — use "stdin" of run_command for interactive programs.
+- After a test/execution failure: read which file/line likely caused it; fix DIRECTLY with write_file (read_file as dependency if needed); NEVER re-run the same command unchanged; re-run after fixing to confirm. Only "finish" after real execution proves the objective.
+
+TOOLS AVAILABLE:
+
+{self._build_tools_context_compact()}
+
+DECISION FORMATS:
+
+TASK: {{"action": "task", "task": {{"tool": "write_file", "arguments": {{"project_name": "test-project", "file_path": "result.py", "content": "brief description (not full content)"}}, "dependencies": []}}}}
+INVESTIGATION (analysis objective only): {{"action": "task", "task": {{"tool": "list_files", "arguments": {{"project_name": "my-project"}}, "investigation": true, "dependencies": []}}}}
+WITH DEPENDENCY: {{"action": "task", "task": {{"tool": "write_file", "arguments": {{"project_name": "test-project", "file_path": "src/service.js", "content": "brief change description"}}, "dependencies": [{{"tool": "read_file", "arguments": {{"project_name": "test-project", "file_path": "src/service.js"}}}}]}}}}
+FINISH: {{"action": "finish", "content": "Description of the final result."}}
+FAIL: {{"action": "fail", "reason": "Reason for failure."}}
+"checklist_progress" is optional — omit when nothing was completed.
+
+OBJECTIVE:
+
+{objective}
+
+CURRENT CONTEXT:
+
+{context}
+"""

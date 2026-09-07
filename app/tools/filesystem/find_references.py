@@ -108,4 +108,5 @@ tool = Tool(
     function=find_references,
     definition=definition,
     type=ToolType.ANALYSIS,
+    pure=True,
 )
