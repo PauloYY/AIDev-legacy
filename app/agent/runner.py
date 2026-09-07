@@ -16,6 +16,17 @@ from app.agent.context.checklist import ProjectChecklist
 from app.agent.context.error_checklist import ErrorChecklist
 from app.agent.context.final_verification import FinalVerification
 from app.agent.context.planner_error_memory import PlannerErrorMemory
+from app.agent.trace import (
+    ExecutionTrace,
+    NullTrace,
+    error_type_and_signature,
+    extract_file_path,
+    is_timeout_result,
+    parse_exit_code,
+    sanitize_arguments,
+    sanitize_result,
+    truncate_text,
+)
 from app.exceptions import LLMInvalidResponseError
 from app.tools.registry import ToolRegistry
 
@@ -74,6 +85,7 @@ class Runner:
         final_verification: FinalVerification | None = None,
         on_event=None,
         max_iterations: int | None = None,
+        execution_trace: ExecutionTrace | NullTrace | None = None,
     ):
         self.planner = planner
         self.task_decision_maker = task_decision_maker
@@ -97,6 +109,9 @@ class Runner:
         )
         self.on_event = on_event
         self.max_iterations = max_iterations or self.MAX_ITERATIONS
+        # Observabilidade (Fase 3): trace estruturado por execução. None
+        # = cria um ExecutionTrace novo a cada run(); NullTrace desativa.
+        self.execution_trace = execution_trace
 
     def _emit(self, event_type: str, **data):
         # Fase 3: contadores de performance (não alteram eventos).
@@ -137,6 +152,70 @@ class Runner:
             stats.test_passed += 1
         else:
             stats.test_failed += 1
+
+    def _trace_or_null(self):
+        """Trace da run atual (nunca None, nunca levanta)."""
+        trace = getattr(self, "_trace", None)
+        if trace is None:
+            return NullTrace()
+        return trace
+
+    def _trace_tool_result(
+        self,
+        iteration,
+        tool: str,
+        arguments: dict,
+        result,
+        success: bool,
+        dependency: bool = False,
+    ) -> None:
+        """Registra tool_result (+ test_result p/ teste/build) no trace.
+
+        Observabilidade pura: só metadados e resumos truncados, nunca
+        conteúdo integral (ver app.agent.trace). Não altera o fluxo.
+        """
+
+        trace = self._trace_or_null()
+        try:
+            is_test_build = (
+                tool == "run_command"
+                and self.operational_memory.is_test_or_build_command(
+                    str((arguments or {}).get("command", ""))
+                )
+            )
+        except Exception:
+            is_test_build = False
+
+        command = None
+        if tool == "run_command" and isinstance(arguments, dict):
+            command = truncate_text(
+                str(arguments.get("command", "")), 500)
+
+        trace.record(
+            "tool_result",
+            iteration=iteration,
+            tool=tool,
+            dependency=dependency,
+            success=success,
+            file_path=extract_file_path(arguments),
+            arguments=sanitize_arguments(tool, arguments),
+            command=command,
+            exit_code=parse_exit_code(result),
+            timeout=is_timeout_result(result),
+            result_summary=sanitize_result(result),
+        )
+
+        if is_test_build:
+            trace.record(
+                "test_result",
+                iteration=iteration,
+                dependency=dependency,
+                command=command,
+                exit_code=parse_exit_code(result),
+                timeout=is_timeout_result(result),
+                success=success,
+                result_summary=sanitize_result(result),
+            )
 
     def _detect_loop(self, history):
         if len(history) < history.maxlen:
@@ -238,6 +317,14 @@ class Runner:
         )
         self._note_test_run(
             tool_name, task.arguments, investigation_succeeded
+        )
+        self._trace_tool_result(
+            iteration=iteration,
+            tool=tool_name,
+            arguments=task.arguments,
+            result=result,
+            success=investigation_succeeded,
+            dependency=True,
         )
 
         return (
@@ -492,6 +579,7 @@ class Runner:
             logger.warning(
                 "Verificação final falhou ao rodar: %s", error,
             )
+            self._last_final_verification_status = "error"
             return None
 
         self._emit(
@@ -508,11 +596,14 @@ class Runner:
                 "final_verification_warning",
                 message="Verificação final indisponível — LLM falhou ou retornou JSON inválido.",
             )
+            self._last_final_verification_status = "unavailable"
             return None
 
         if result.is_problems:
+            self._last_final_verification_status = "problems_found"
             return result.report
 
+        self._last_final_verification_status = "ok"
         return None
 
     def run(
@@ -526,11 +617,42 @@ class Runner:
         self._current_objective = objective
         self._stats = AgentStats()
         self._finish_check_cache = self._FINISH_CHECK_MISS
+        self._last_final_verification_status = "not_run"
         run_start = time.monotonic()
 
-        summary = self.project_context.initialize(
-            project_name
+        # Fase 3 (trace): um arquivo JSONL próprio por execução. Nunca
+        # altera o comportamento — só observa. Falhas ao persistir são
+        # contidas dentro de ExecutionTrace.record().
+        trace = self.execution_trace
+        if trace is None:
+            try:
+                trace = ExecutionTrace()
+            except Exception as error:
+                logger.warning("Trace desativado (falha ao criar): %s",
+                               error)
+                trace = NullTrace()
+        self._trace = trace
+        trace.record(
+            "run_start",
+            objective=truncate_text(objective, 2000),
+            project_name=project_name,
+            max_iterations=self.max_iterations,
         )
+
+        try:
+            summary = self.project_context.initialize(
+                project_name
+            )
+        except Exception as error:
+            error_type, error_signature = error_type_and_signature(error)
+            trace.record(
+                "run_error",
+                outcome="failure",
+                phase="init",
+                error_type=error_type,
+                error_signature=error_signature,
+            )
+            raise
 
         self.operational_memory.reset()
         self.checklist.reset()
@@ -567,8 +689,18 @@ class Runner:
         planner_retry_context = ""
         iteration = 0
 
+        # Fase 3 Etapa 2: short repair só quando o Planner real expõe o
+        # caminho alternativo. Doubles legados (ex.: FakePlanner) seguem
+        # exatamente o fluxo de retry completo de antes.
+        can_short_repair = (
+            hasattr(self.planner, "plan_with_prompt")
+            and hasattr(self.planner, "build_repair_prompt")
+        )
+
         while True:
             iteration += 1
+
+            trace.record("iteration_start", iteration=iteration)
 
             if iteration > self.max_iterations:
                 error = (
@@ -583,11 +715,26 @@ class Runner:
                     error=error,
                 )
 
+                trace.record(
+                    "run_error",
+                    outcome="failure",
+                    phase="max_iterations",
+                    iteration=iteration,
+                    error_type="RuntimeError",
+                    error_signature=truncate_text(error, 500),
+                )
+
                 raise RuntimeError(error)
 
             planner_attempts = 0
             allow_investigation = False
             used_investigation_budget = False
+            # Estado do short repair: só vive dentro da iteração. O
+            # retry_context também é zerado aqui a cada iteração — sem
+            # isso, a correção de uma iteração anterior vazava para
+            # todos os prompts completos seguintes da run.
+            planner_retry_context = ""
+            short_repair = None
 
             while True:
                 planner_attempts += 1
@@ -597,16 +744,27 @@ class Runner:
                 self._stats.planner_calls += 1
 
                 try:
-                    decision = self.planner.plan(
-                        objective=objective,
-                        context=(
-                            f"{context}\n\n"
-                            f"{planner_retry_context}"
-                            if planner_retry_context
-                            else context
-                        ),
-                        iteration=iteration,
-                    )
+                    if short_repair is not None and can_short_repair:
+                        decision = self.planner.plan_with_prompt(
+                            prompt=short_repair["prompt"],
+                            iteration=iteration,
+                            request_type="short_repair",
+                        )
+                    else:
+                        decision = self.planner.plan(
+                            objective=objective,
+                            context=(
+                                f"{context}\n\n"
+                                f"{planner_retry_context}"
+                                if planner_retry_context
+                                else context
+                            ),
+                            iteration=iteration,
+                            request_type=(
+                                "normal" if planner_attempts == 1
+                                else "full_retry"
+                            ),
+                        )
 
                     if decision.action == DecisionAction.TASK:
                         is_investigation_task = (
@@ -646,6 +804,15 @@ class Runner:
                         error=str(error),
                     )
 
+                    error_type, error_sig = error_type_and_signature(error)
+                    trace.record(
+                        "planner_error",
+                        iteration=iteration,
+                        planner_attempt=planner_attempts,
+                        error_type=error_type,
+                        error_signature=error_sig,
+                    )
+
                     error_signature = str(error)
                     already_forbidden = self.planner_error_memory.seen(
                         error_signature
@@ -663,12 +830,87 @@ class Runner:
                             context = recovered_context
                             planner_retry_context = ""
                             planner_attempts = 0
+                            trace.record(
+                                "planner_recovery",
+                                iteration=iteration,
+                                tool=(decision.task.tool
+                                      if decision is not None
+                                      and decision.task is not None
+                                      else None),
+                                file_path=(
+                                    extract_file_path(
+                                        decision.task.arguments)
+                                    if decision is not None
+                                    and decision.task is not None
+                                    else None),
+                            )
                             continue
 
+                        trace.record(
+                            "run_error",
+                            outcome="failure",
+                            phase="planner_attempts_exceeded",
+                            iteration=iteration,
+                            error_type="RuntimeError",
+                            error_signature=(
+                                "O Planner excedeu o limite de tentativas."
+                            ),
+                        )
                         raise RuntimeError(
                             "O Planner excedeu o limite de tentativas."
                         ) from error
 
+                    # Fase 3 Etapa 2: alternância curto → completo. A
+                    # falha veio do attempt completo (short_repair None)
+                    # ou do curto (short_repair armado)? O orçamento
+                    # MAX_PLANNER_ATTEMPTS é o mesmo de antes — o curto
+                    # nunca cria attempts, iterações ou loops novos.
+                    failed_was_short = short_repair is not None
+                    short_repair = None
+
+                    if can_short_repair and not failed_was_short:
+                        repair_prompt = None
+                        try:
+                            failed_tool = (
+                                decision.task.tool
+                                if decision is not None
+                                and decision.task is not None
+                                else None
+                            )
+                            repair_prompt = (
+                                self.planner.build_repair_prompt(
+                                    error=error_signature,
+                                    raw_response=getattr(
+                                        self.planner,
+                                        "last_raw_response",
+                                        None,
+                                    ),
+                                    tool_name=failed_tool,
+                                )
+                            )
+                        except Exception as repair_error:
+                            logger.warning(
+                                "Falha ao montar short repair prompt "
+                                "(usando retry completo): %s",
+                                repair_error,
+                            )
+                            repair_prompt = None
+
+                        if repair_prompt is not None:
+                            short_repair = {"prompt": repair_prompt}
+                            trace.record(
+                                "planner_retry",
+                                iteration=iteration,
+                                planner_attempt=planner_attempts,
+                                retry_type="short_repair",
+                                reason=error_sig,
+                                prompt_chars=len(repair_prompt),
+                            )
+                            continue
+
+                    # Fallback obrigatório: retry completo existente.
+                    # Também é o caminho integral para Planners sem
+                    # suporte a repair (comportamento anterior).
                     # Verificação extra: se este exato erro já tinha
                     # sido cometido antes (nesta mesma iteração ou em
                     # alguma anterior), a correção genérica já não
@@ -702,12 +944,56 @@ class Runner:
                             "Retorne somente o JSON de decisão esperado pelo Planner."
                         )
 
+                    # Mede DEPOIS de definir o retry_context, para o
+                    # prompt_chars refletir o que será enviado de fato.
+                    if can_short_repair:
+                        full_chars = self.planner.full_prompt_chars(
+                            objective,
+                            (
+                                f"{context}\n\n{planner_retry_context}"
+                                if planner_retry_context
+                                else context
+                            ),
+                        )
+                    else:
+                        full_chars = len(objective or "") + len(
+                            context or "") + len(planner_retry_context)
+                    trace.record(
+                        "planner_retry",
+                        iteration=iteration,
+                        planner_attempt=planner_attempts,
+                        retry_type="full_context",
+                        reason=error_sig,
+                        prompt_chars=full_chars,
+                    )
+
                     continue
 
                 self._emit(
                     "planner_end",
                     action=decision.action.value,
                 )
+
+                if decision.action == DecisionAction.TASK:
+                    trace.record(
+                        "planner_decision",
+                        iteration=iteration,
+                        planner_attempt=planner_attempts,
+                        decision=decision.action.value,
+                        tool=decision.task.tool,
+                        file_path=extract_file_path(
+                            decision.task.arguments),
+                        dependencies=len(decision.task.dependencies),
+                        checklist_progress=decision.checklist_progress,
+                    )
+                else:
+                    trace.record(
+                        "planner_decision",
+                        iteration=iteration,
+                        planner_attempt=planner_attempts,
+                        decision=decision.action.value,
+                        checklist_progress=decision.checklist_progress,
+                    )
 
                 break
 
@@ -717,7 +1003,14 @@ class Runner:
                 self._emit("checklist_updated", marked=marked)
 
             if decision.action == DecisionAction.FINISH:
+                trace.record("finish_requested", iteration=iteration)
                 check_error = self._cached_finish_check(project_name)
+                trace.record(
+                    "finish_gate",
+                    iteration=iteration,
+                    gate="check_project",
+                    passed=check_error is None,
+                )
 
                 if check_error:
                     self._emit(
@@ -743,7 +1036,26 @@ class Runner:
                     stagnant_iterations = 0
                     self._stats.finish_blocks += 1
 
+                    trace.record(
+                        "finish_block",
+                        iteration=iteration,
+                        gate="check_project",
+                        reason=(
+                            "check_project encontrou problemas"
+                        ),
+                        report_summary=sanitize_result(check_error),
+                    )
+
                     continue
+
+                error_pending = self.error_checklist.pending_count
+                trace.record(
+                    "finish_gate",
+                    iteration=iteration,
+                    gate="error_checklist",
+                    passed=error_pending == 0,
+                    pending_count=error_pending,
+                )
 
                 if self.error_checklist.pending_count:
                     error_block = self.error_checklist.render()
@@ -772,6 +1084,16 @@ class Runner:
                     stagnant_iterations = 0
                     self._stats.finish_blocks += 1
 
+                    trace.record(
+                        "finish_block",
+                        iteration=iteration,
+                        gate="error_checklist",
+                        reason=(
+                            "falhas de teste/build ainda não corrigidas"
+                        ),
+                        pending_count=error_pending,
+                    )
+
                     continue
 
                 current_summary = self.project_context.summary.read(
@@ -779,6 +1101,17 @@ class Runner:
                 )
                 final_check_error = self._run_final_verification(
                     project_name, current_summary,
+                )
+                trace.record(
+                    "final_verification",
+                    iteration=iteration,
+                    status=self._last_final_verification_status,
+                )
+                trace.record(
+                    "finish_gate",
+                    iteration=iteration,
+                    gate="final_verification",
+                    passed=final_check_error is None,
                 )
 
                 if final_check_error:
@@ -805,9 +1138,30 @@ class Runner:
                     stagnant_iterations = 0
                     self._stats.finish_blocks += 1
 
+                    trace.record(
+                        "finish_block",
+                        iteration=iteration,
+                        gate="final_verification",
+                        reason=(
+                            "verificação final encontrou problemas"
+                        ),
+                        report_summary=sanitize_result(
+                            final_check_error),
+                    )
+
                     continue
 
                 if self.checklist.pending_count:
+                    pending_items = self.checklist.pending_items
+                    trace.record(
+                        "finish_checklist_pending",
+                        iteration=iteration,
+                        pending_count=self.checklist.pending_count,
+                        pending_items=[
+                            truncate_text(item.description, 200)
+                            for item in pending_items
+                        ],
+                    )
                     self._emit(
                         "checklist_pending_on_finish",
                         pending=[
@@ -840,6 +1194,13 @@ class Runner:
                     )
                 except Exception:
                     perf_summary = None
+                trace.record(
+                    "run_end",
+                    outcome="success",
+                    iterations=iteration,
+                    result_summary=truncate_text(
+                        decision.content, 2000),
+                )
                 self._emit(
                     "agent_done",
                     usage=self.planner.llm.usage.summary(),
@@ -856,9 +1217,27 @@ class Runner:
                     "agent_error",
                     error=decision.reason,
                 )
+                trace.record(
+                    "run_error",
+                    outcome="failure",
+                    phase="agent_fail",
+                    iteration=iteration,
+                    error_type="RuntimeError",
+                    error_signature=truncate_text(
+                        decision.reason, 500),
+                )
                 raise RuntimeError(decision.reason)
 
             if decision.action != DecisionAction.TASK:
+                trace.record(
+                    "run_error",
+                    outcome="failure",
+                    phase="unknown_action",
+                    iteration=iteration,
+                    error_type="ValueError",
+                    error_signature=truncate_text(
+                        f"Ação desconhecida: {decision.action}", 500),
+                )
                 raise ValueError(
                     f"Ação desconhecida: {decision.action}"
                 )
@@ -911,6 +1290,15 @@ class Runner:
                     )
 
                 self._emit("planner_error", error=error)
+
+                trace.record(
+                    "loop_detected",
+                    iteration=iteration,
+                    kind=("stagnant"
+                          if is_stagnant and loop_signatures is None
+                          else "repetition"),
+                    detail=truncate_text(error, 500),
+                )
 
                 context = (
                     f"{context}\n\n"
@@ -987,6 +1375,14 @@ class Runner:
                     dependency.arguments,
                     dependency_succeeded,
                 )
+                self._trace_tool_result(
+                    iteration=iteration,
+                    tool=dependency.tool,
+                    arguments=dependency.arguments,
+                    result=result,
+                    success=dependency_succeeded,
+                    dependency=True,
+                )
 
                 if not (
                     dependency_succeeded
@@ -1035,7 +1431,28 @@ class Runner:
                         error=str(error),
                     )
 
+                    error_type, error_sig = error_type_and_signature(
+                        error)
+                    trace.record(
+                        "executor_error",
+                        iteration=iteration,
+                        executor_attempt=executor_attempts,
+                        error_type=error_type,
+                        error_signature=error_sig,
+                    )
+
                     if executor_attempts >= self.MAX_EXECUTOR_ATTEMPTS:
+                        trace.record(
+                            "run_error",
+                            outcome="failure",
+                            phase="executor_attempts_exceeded",
+                            iteration=iteration,
+                            error_type="RuntimeError",
+                            error_signature=(
+                                "O Executor excedeu o limite de "
+                                "tentativas."
+                            ),
+                        )
                         raise RuntimeError(
                             "O Executor excedeu o limite de tentativas."
                         ) from error
@@ -1062,7 +1479,26 @@ class Runner:
                         error=error,
                     )
 
+                    trace.record(
+                        "executor_error",
+                        iteration=iteration,
+                        executor_attempt=executor_attempts,
+                        error_type="ToolMismatchError",
+                        error_signature=truncate_text(error, 500),
+                    )
+
                     if executor_attempts >= self.MAX_EXECUTOR_ATTEMPTS:
+                        trace.record(
+                            "run_error",
+                            outcome="failure",
+                            phase="executor_attempts_exceeded",
+                            iteration=iteration,
+                            error_type="RuntimeError",
+                            error_signature=(
+                                "O Executor excedeu o limite de "
+                                "tentativas."
+                            ),
+                        )
                         raise RuntimeError(
                             "O Executor excedeu o limite de tentativas."
                         )
@@ -1091,7 +1527,28 @@ class Runner:
                         error=str(error),
                     )
 
+                    error_type, error_sig = error_type_and_signature(
+                        error)
+                    trace.record(
+                        "executor_error",
+                        iteration=iteration,
+                        executor_attempt=executor_attempts,
+                        error_type=error_type,
+                        error_signature=error_sig,
+                    )
+
                     if executor_attempts >= self.MAX_EXECUTOR_ATTEMPTS:
+                        trace.record(
+                            "run_error",
+                            outcome="failure",
+                            phase="executor_attempts_exceeded",
+                            iteration=iteration,
+                            error_type="RuntimeError",
+                            error_signature=(
+                                "O Executor excedeu o limite de "
+                                "tentativas."
+                            ),
+                        )
                         raise RuntimeError(
                             "O Executor excedeu o limite de tentativas."
                         ) from error
@@ -1110,6 +1567,14 @@ class Runner:
                 self._emit(
                     "executor_end",
                     tool=execution.tool,
+                )
+
+                trace.record(
+                    "executor_decision",
+                    iteration=iteration,
+                    executor_attempt=executor_attempts,
+                    tool=execution.tool,
+                    file_path=extract_file_path(execution.arguments),
                 )
 
                 break
@@ -1140,6 +1605,20 @@ class Runner:
                 )
 
                 self._emit("executor_error", error=error)
+
+                trace.record(
+                    "executor_error",
+                    iteration=iteration,
+                    executor_attempt=executor_attempts,
+                    error_type="RepeatedMutationError",
+                    error_signature=truncate_text(error, 500),
+                )
+                trace.record(
+                    "loop_detected",
+                    iteration=iteration,
+                    kind="mutation_repeat",
+                    detail=truncate_text(error, 500),
+                )
 
                 context = (
                     f"{context}\n\n"
@@ -1225,6 +1704,14 @@ class Runner:
             self._note_test_run(
                 execution.tool, execution.arguments, execution_succeeded
             )
+            self._trace_tool_result(
+                iteration=iteration,
+                tool=execution.tool,
+                arguments=execution.arguments,
+                result=result,
+                success=execution_succeeded,
+                dependency=False,
+            )
 
             if not (
                 execution_succeeded
@@ -1240,12 +1727,31 @@ class Runner:
                 iteration,
             )
 
-            summary = self.project_summary_updater.update(
-                objective=objective,
-                project_name=project_name,
-                task=task,
-                result=result,
+            try:
+                summary = self.project_summary_updater.update(
+                    objective=objective,
+                    project_name=project_name,
+                    task=task,
+                    result=result,
+                    iteration=iteration,
+                )
+            except Exception as error:
+                error_type, error_sig = error_type_and_signature(error)
+                trace.record(
+                    "run_error",
+                    outcome="failure",
+                    phase="summary_updater",
+                    iteration=iteration,
+                    error_type=error_type,
+                    error_signature=error_sig,
+                )
+                raise
+
+            trace.record(
+                "summary_updated",
                 iteration=iteration,
+                tool=execution.tool,
+                file_path=extract_file_path(execution.arguments),
             )
 
             context = (

@@ -27,7 +27,7 @@ class FakePlanner:
         self.llm = FakeLLM()
         self.received_contexts = []
 
-    def plan(self, objective, context, iteration=None):
+    def plan(self, objective, context, iteration=None, request_type=None):
         self.received_contexts.append(context)
         item = self._decisions.pop(0)
 

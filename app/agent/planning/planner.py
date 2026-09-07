@@ -24,13 +24,19 @@ class Planner:
         self.tools = tools
         self._cached_tools_context: str | None = None
         self._cached_tools_names: tuple[str, ...] = ()
+        # Último conteúdo bruto retornado pela LLM (mesmo quando o
+        # parse falha). O Runner usa para montar o short repair prompt
+        # sem precisar reenviar o contexto completo. Só diagnóstico.
+        self.last_raw_response: str | None = None
 
     def plan(
         self,
         objective: str,
         context: str = "",
         iteration: int | None = None,
+        request_type: str = "normal",
     ) -> Decision:
+        """Decisão normal do Planner (prompt completo). Inalterado."""
 
         prompt = self._build_prompt(
             objective,
@@ -51,6 +57,28 @@ class Planner:
             )
             context_breakdown = None
 
+        return self.plan_with_prompt(
+            prompt=prompt,
+            iteration=iteration,
+            request_type=request_type,
+            context_breakdown=context_breakdown,
+        )
+
+    def plan_with_prompt(
+        self,
+        prompt: str,
+        iteration: int | None = None,
+        request_type: str = "normal",
+        context_breakdown: dict[str, dict[str, int]] | None = None,
+    ) -> Decision:
+        """Executa UMA chamada de decisão com um prompt já montado.
+
+        Caminho compartilhado entre a decisão normal (prompt completo)
+        e o short repair (prompt curto). Não decide nada sozinho: só
+        chama a LLM, valida o envelope e delega o parse ao
+        DecisionParser — as mesmas regras de antes.
+        """
+
         try:
             response = self.llm.generate(
                 messages=[
@@ -62,20 +90,43 @@ class Planner:
                 component="Planner",
                 iteration=iteration,
                 context_breakdown=context_breakdown,
+                request_type=request_type,
             )
         except TypeError:
-            # Compatibilidade com doubles de LLM antigos que não aceitam
-            # o kwarg de instrumentação (ex.: FakeLLM em testes legados).
-            response = self.llm.generate(
-                messages=[
-                    Message(
-                        role="user",
-                        content=prompt,
-                    )
-                ],
-                component="Planner",
-                iteration=iteration,
-            )
+            try:
+                # Compatibilidade com doubles antigos sem `request_type`.
+                response = self.llm.generate(
+                    messages=[
+                        Message(
+                            role="user",
+                            content=prompt,
+                        )
+                    ],
+                    component="Planner",
+                    iteration=iteration,
+                    context_breakdown=context_breakdown,
+                )
+            except TypeError:
+                # Compatibilidade com doubles de LLM antigos que não
+                # aceitam o kwarg de instrumentação (ex.: FakeLLM em
+                # testes legados).
+                response = self.llm.generate(
+                    messages=[
+                        Message(
+                            role="user",
+                            content=prompt,
+                        )
+                    ],
+                    component="Planner",
+                    iteration=iteration,
+                )
+
+        # Guarda o bruto ANTES de validar: se o parse falhar, o Runner
+        # ainda consegue mostrar a decisão anterior no repair prompt.
+        try:
+            self.last_raw_response = response.content
+        except Exception:
+            self.last_raw_response = None
 
         if response.tool_calls:
             raise ValueError(
@@ -90,6 +141,214 @@ class Planner:
             )
 
         return self.parser.parse(response.content)
+
+    # ---------- Fase 3 Etapa 2: short repair prompt ----------
+
+    # Marcadores (PT/EN) usados para escolher a dica direcionada. São
+    # os mesmos textos que o validador/parser já emitem — nenhuma regra
+    # nova, só classificação para montar o reparo mínimo.
+    _HINT_DEPENDENCY_ONLY = "só pode ser usada como dependency"
+    _HINT_UNKNOWN_TOOL = "Tool não encontrada"
+    _HINT_BAD_DEPENDENCY = "não pode ser usada como dependency"
+    _HINT_SCHEMA = (
+        "required", "propriedade", "properties", "schema", "Schema",
+        "argumento", "additional",
+    )
+    # Versão minúscula (inclui variações com maiúscula inicial, como
+    # "Argumento desconhecido ... Argumentos válidos", do schema).
+    _HINT_SCHEMA_LOWER = (
+        "required", "propriedade", "properties", "schema", "argumento",
+        "argumentos", "obrigatóri", "válido", "desconhecido",
+        "additional", "tipo",
+    )
+    _HINT_JSON = "JSON inválido"
+    _HINT_TOOL_CALLS = "executar ferramentas diretamente"
+    _HINT_NO_CONTENT = "não retornou conteúdo"
+    _HINT_BAD_ACTION = "Ação de decisão inválida"
+
+    MAX_REPAIR_PREVIOUS_CHARS = 1500
+    MAX_REPAIR_ERROR_CHARS = 500
+
+    def full_prompt_chars(self, objective: str, context: str) -> int:
+        """Tamanho aproximado do prompt completo (só mede, p/ o trace)."""
+        try:
+            return len(self._build_prompt(objective or "", context or ""))
+        except Exception:
+            return 0
+
+    def build_repair_prompt(
+        self,
+        error: str,
+        raw_response: str | None = None,
+        tool_name: str | None = None,
+    ) -> str:
+        """Monta o short repair prompt para UM retry interno do Planner.
+
+        Contém somente: a decisão anterior (truncada), o erro de
+        validação e a dica direcionada ao erro. NÃO inclui resumo do
+        projeto, histórico, lista de arquivos, checklists, memória de
+        erros nem o prompt estático — por isso custa uma fração do
+        retry com contexto completo.
+        """
+
+        previous = (raw_response or "").strip()
+        if len(previous) > self.MAX_REPAIR_PREVIOUS_CHARS:
+            omitted = len(previous) - self.MAX_REPAIR_PREVIOUS_CHARS
+            previous = (
+                f"{previous[:self.MAX_REPAIR_PREVIOUS_CHARS]}\n"
+                f"...[truncated, {omitted} chars omitted]"
+            )
+        if not previous:
+            previous = "(empty response)"
+
+        error_text = str(error or "").strip()
+        if len(error_text) > self.MAX_REPAIR_ERROR_CHARS:
+            omitted = len(error_text) - self.MAX_REPAIR_ERROR_CHARS
+            error_text = (
+                f"{error_text[:self.MAX_REPAIR_ERROR_CHARS]}\n"
+                f"...[truncated, {omitted} chars omitted]"
+            )
+
+        hint = self._repair_hint(error_text, tool_name)
+
+        return (
+            "You are the PLANNER of an autonomous software development "
+            "agent. Your previous decision was INVALID — fix ONLY what "
+            "the validation error points out.\n"
+            "\n"
+            "PREVIOUS DECISION:\n"
+            f"{previous}\n"
+            "\n"
+            "VALIDATION ERROR:\n"
+            f"{error_text}\n"
+            "\n"
+            "TARGETED FIX:\n"
+            f"{hint}\n"
+            "\n"
+            "RULES FOR THIS REPAIR:\n"
+            "- Return ONLY the corrected decision JSON "
+            "(same format as a normal Planner decision).\n"
+            "- Do NOT execute tools. Do NOT explain.\n"
+            "- Keep the same task/tool/arguments unless the validation "
+            "error requires changing them."
+        )
+
+    def _repair_hint(self, error_text: str, tool_name: str | None) -> str:
+        """Escolhe a dica mínima para o erro (sem reenviar contexto)."""
+
+        lowered = error_text.lower()
+
+        if self._HINT_DEPENDENCY_ONLY in lowered:
+            tool = tool_name or "read_file"
+            return (
+                f"The tool '{tool}' cannot be a standalone task. Fix it "
+                "in ONE of these two ways:\n"
+                "1. Attach it as a \"dependencies\" entry of the REAL "
+                "action that needs the information (e.g. a write_file "
+                "or run_command task), instead of a task alone; OR\n"
+                "2. Only if this is a pure analysis objective or you "
+                "are investigating a failed test/build, keep it as the "
+                "main task but add \"investigation\": true to the task, "
+                "e.g. {\"action\": \"task\", \"task\": {\"tool\": "
+                f"\"{tool}\", \"arguments\": {{...}}, "
+                "\"investigation\": true, \"dependencies\": []}}."
+            )
+
+        if self._HINT_UNKNOWN_TOOL.lower() in lowered:
+            names = sorted(self.tools._tools.keys())
+            return (
+                "Unknown tool name. Use EXACTLY one of these available "
+                f"tools: {', '.join(names)}. Fix ONLY the tool name "
+                "(keep the rest unless it also violates a rule)."
+            )
+
+        if self._HINT_BAD_DEPENDENCY in lowered:
+            return (
+                "Only analysis tools may appear inside \"dependencies\". "
+                "Remove the non-analysis entry from \"dependencies\" or "
+                "move that action to be the main task tool."
+            )
+
+        if tool_name and any(
+            marker in lowered for marker in self._HINT_SCHEMA_LOWER
+        ):
+            schema = self._compact_tool_schema(tool_name)
+            if schema is not None:
+                return (
+                    "The arguments do not match the tool schema. Exact "
+                    f"schema for '{tool_name}':\n"
+                    f"{schema}\n"
+                    "Fix ONLY the arguments to match \"required\" and "
+                    "the property names."
+                )
+
+        if self._HINT_JSON.lower() in lowered:
+            return (
+                "The response was not valid JSON. Return a single JSON "
+                "object with \"action\" equal to \"task\", \"finish\" "
+                "or \"fail\" (see the normal decision formats)."
+            )
+
+        if self._HINT_TOOL_CALLS in lowered:
+            return (
+                "Never use tool calls. Return the decision as plain "
+                "JSON text only."
+            )
+
+        if self._HINT_NO_CONTENT in lowered:
+            return (
+                "The response had no content. Return the decision as "
+                "plain JSON text."
+            )
+
+        if self._HINT_BAD_ACTION.lower() in lowered:
+            return (
+                "Invalid action. Use \"action\": \"task\" (with a "
+                "\"task\" object), \"finish\" (with \"content\") or "
+                "\"fail\" (with \"reason\")."
+            )
+
+        return (
+            "Return a valid decision JSON: {\"action\": \"task\", "
+            "\"task\": {\"tool\": \"<available tool>\", "
+            "\"arguments\": {...}, \"dependencies\": []}} — or "
+            "\"finish\"/\"fail\". Fix exactly what the validation "
+            "error describes."
+        )
+
+    def _compact_tool_schema(self, tool_name: str) -> str | None:
+        """Schema mínimo de UMA tool (nome, required, propriedades)."""
+
+        try:
+            definition = self.tools.get(tool_name).definition
+        except Exception:
+            return None
+
+        try:
+            function = definition.get("function", {})
+            params = function.get("parameters", {})
+            properties = params.get("properties", {})
+
+            compact_props: dict[str, str] = {}
+            for key, spec in properties.items():
+                if isinstance(spec, dict):
+                    text = spec.get("description") or spec.get("type", "")
+                else:
+                    text = str(spec)
+                compact_props[key] = str(text)[:160]
+
+            return json.dumps(
+                {
+                    "name": function.get("name", tool_name),
+                    "description": str(
+                        function.get("description", ""))[:300],
+                    "required": params.get("required", []),
+                    "properties": compact_props,
+                },
+                ensure_ascii=False,
+            )
+        except Exception:
+            return None
 
     def build_prompt_sections(
         self,

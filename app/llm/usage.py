@@ -50,6 +50,11 @@ class CallRecord:
     empty_response: bool = False
     success: bool = True
     error: str | None = None
+    # Fase 3 Etapa 2 (short repair): qual prompt originou a chamada do
+    # Planner — "normal" (primeira tentativa), "short_repair" (reparo
+    # curto) ou "full_retry" (retry com contexto completo). Default
+    # mantém compat com registros antigos e outros componentes.
+    request_type: str = "normal"
 
     @property
     def total_chars(self) -> int:
@@ -87,6 +92,7 @@ class UsageTracker:
         empty_response: bool = False,
         success: bool = True,
         error: str | None = None,
+        request_type: str = "normal",
     ) -> None:
         if usage is None:
             return
@@ -122,6 +128,7 @@ class UsageTracker:
                 empty_response=empty_response,
                 success=success,
                 error=error,
+                request_type=request_type or "normal",
             )
         )
 
@@ -188,6 +195,45 @@ class UsageTracker:
 
     def get_records(self) -> list[CallRecord]:
         return list(self._records)
+
+    # ---------- Fase 3 Etapa 2: short repair do Planner ----------
+
+    def planner_request_stats(self) -> dict[str, Any]:
+        """Agregados do Planner por request_type (só observa).
+
+        Retorna {request_type: {"calls", "prompt_tokens",
+        "completion_tokens", "total_tokens", "avg_prompt_chars",
+        "avg_duration_ms"}}. Novo método — não altera breakdown() nem
+        nenhum formato público existente.
+        """
+
+        groups: dict[str, dict[str, Any]] = {}
+        for record in self._records:
+            if record.component != "Planner":
+                continue
+            key = record.request_type or "normal"
+            entry = groups.setdefault(key, {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "prompt_chars": 0,
+                "duration_ms": 0.0,
+            })
+            entry["calls"] += 1
+            entry["prompt_tokens"] += record.usage.prompt_tokens
+            entry["completion_tokens"] += record.usage.completion_tokens
+            entry["total_tokens"] += record.usage.total_tokens
+            entry["prompt_chars"] += record.prompt_chars
+            entry["duration_ms"] += record.duration_ms
+
+        for entry in groups.values():
+            calls = entry["calls"] or 1
+            entry["avg_prompt_chars"] = entry.pop("prompt_chars") // calls
+            total_ms = entry.pop("duration_ms")
+            entry["avg_duration_ms"] = total_ms / calls
+
+        return groups
 
     # ---------- Etapa 2E: métricas do ProjectSummaryUpdater ----------
 

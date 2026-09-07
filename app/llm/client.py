@@ -19,6 +19,7 @@ class LLMClient:
         iteration: int | None = None,
         context_breakdown: dict[str, dict[str, int]] | None = None,
         attempt: int = 1,
+        request_type: str = "normal",
     ) -> LLMResponse:
 
         prompt_text = ""
@@ -49,6 +50,7 @@ class LLMClient:
                 attempt=attempt,
                 success=False,
                 error=type(error).__name__,
+                request_type=request_type,
             )
             raise
 
@@ -67,6 +69,7 @@ class LLMClient:
             empty_response=not (
                 response.content and response.content.strip()
             ),
+            request_type=request_type,
         )
 
         return response

@@ -1,0 +1,260 @@
+"""Trace persistente e estruturado de execução (Fase 3 — observabilidade).
+
+Somente observa: nunca altera decisões, prompts, regras de correção,
+ciclo de erros ou lógica de finish. Cada execução do Runner gera um
+arquivo JSONL próprio (um evento por linha), que sobrevive ao término
+do processo e permite reconstruir posteriormente o que aconteceu em
+cada iteração (planner attempts/retries, erros do executor, testes,
+bloqueios de finish, verificação final).
+
+Garantias:
+- Nunca sobrescreve traces anteriores (run_id único por execução).
+- A escrita nunca quebra a execução principal: qualquer falha ao
+  persistir é apenas logada e a run continua normalmente.
+- Nunca armazena conteúdo integral de `write_file`, prompts completos,
+  stdout/stderr enormes ou valores com cara de segredo — apenas
+  resumos truncados e metadados (tool, file_path, exit code etc.).
+"""
+
+import json
+import logging
+import os
+import re
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+logger = logging.getLogger(__name__)
+
+
+# Limites de representação (só afetam o que vai para o trace, nunca os
+# dados reais da execução).
+MAX_COMMAND_CHARS = 500
+MAX_RESULT_CHARS = 2000
+MAX_ERROR_CHARS = 500
+MAX_OBJECTIVE_CHARS = 2000
+MAX_FILE_PATH_CHARS = 500
+MAX_ARG_VALUE_CHARS = 500
+MAX_CHECKLIST_ITEM_CHARS = 200
+
+_EXIT_CODE_RE = re.compile(r"exit code (-?\d+)")
+
+# Chaves cujo valor nunca é persistido integralmente.
+_SENSITIVE_KEY_SUBSTRINGS = (
+    "api_key",
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "bearer",
+)
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _truncate(text: Any, limit: int) -> str:
+    try:
+        text = text if isinstance(text, str) else str(text)
+    except Exception:
+        return "<unrepresentable>"
+    if len(text) <= limit:
+        return text
+    omitted = len(text) - limit
+    return f"{text[:limit]}... [+{omitted} chars]"
+
+
+def truncate_text(text: Any, limit: int = MAX_RESULT_CHARS) -> str:
+    """Truncamento público para reúso (ex.: Runner monta resumos)."""
+    return _truncate(text, limit)
+
+
+def _looks_sensitive(key: str) -> bool:
+    lowered = str(key).lower()
+    return any(marker in lowered for marker in _SENSITIVE_KEY_SUBSTRINGS)
+
+
+def sanitize_arguments(tool: Any, arguments: Any) -> dict[str, Any]:
+    """Representação segura dos argumentos de uma tool para o trace.
+
+    - `write_file.content` nunca vai integral (vira "<omitted: N chars>").
+    - Valores com cara de segredo (token, api_key, ...) viram "<redacted>".
+    - Strings longas são truncadas; valores não-serializáveis viram str.
+    - Nunca muta o dict original.
+    """
+
+    if not isinstance(arguments, dict):
+        return {"_value": _truncate(arguments, MAX_ARG_VALUE_CHARS)}
+
+    compact: dict[str, Any] = {}
+    for key, value in arguments.items():
+        try:
+            if tool == "write_file" and key == "content":
+                if value is None:
+                    compact[key] = "<empty>"
+                else:
+                    text = value if isinstance(value, str) else str(value)
+                    if len(text) == 0:
+                        compact[key] = "<empty>"
+                    else:
+                        compact[key] = f"<omitted: {len(text)} chars>"
+                continue
+
+            if _looks_sensitive(key):
+                compact[key] = "<redacted>"
+                continue
+
+            if isinstance(value, str):
+                compact[key] = _truncate(value, MAX_ARG_VALUE_CHARS)
+                continue
+
+            # Não-string: mantém se for JSON-serializável e curto,
+            # senão resume como string truncada.
+            try:
+                encoded = json.dumps(value, ensure_ascii=False, default=str)
+            except Exception:
+                encoded = str(value)
+            if len(encoded) > MAX_ARG_VALUE_CHARS + 20:
+                compact[key] = _truncate(str(value), MAX_ARG_VALUE_CHARS)
+            else:
+                compact[key] = value
+        except Exception:
+            compact[key] = "<unrepresentable>"
+
+    return compact
+
+
+def sanitize_result(result: Any, limit: int = MAX_RESULT_CHARS) -> str:
+    """Resumo truncado do resultado de uma tool (stdout/stderr)."""
+    return _truncate(result, limit)
+
+
+def error_type_and_signature(error: BaseException | Any) -> tuple[str, str]:
+    """Tipo + assinatura curta de um erro (sem stack, sem dados)."""
+    try:
+        return type(error).__name__, _truncate(str(error), MAX_ERROR_CHARS)
+    except Exception:
+        return "UnknownError", "<unrepresentable>"
+
+
+def extract_file_path(arguments: Any) -> str | None:
+    """file_path dos argumentos, quando presente (só metadado)."""
+    if isinstance(arguments, dict):
+        value = arguments.get("file_path")
+        if isinstance(value, str) and value:
+            return _truncate(value, MAX_FILE_PATH_CHARS)
+    return None
+
+
+def parse_exit_code(result: Any) -> int | None:
+    """Extrai o exit code do formato de run_command ("exit code N")."""
+    try:
+        match = _EXIT_CODE_RE.search(str(result))
+    except Exception:
+        return None
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def is_timeout_result(result: Any) -> bool:
+    try:
+        return str(result).lstrip().startswith("TIMEOUT:")
+    except Exception:
+        return False
+
+
+def default_trace_dir() -> Path:
+    configured = os.getenv("AIDEV_TRACE_DIR")
+    if configured and configured.strip():
+        return Path(configured.strip())
+    return Path(tempfile.gettempdir()) / "aidev-traces"
+
+
+class ExecutionTrace:
+    """Abstração mínima do trace persistente (API: `record`)."""
+
+    def __init__(
+        self,
+        trace_dir: str | Path | None = None,
+        run_id: str | None = None,
+    ):
+        self.run_id = run_id or uuid.uuid4().hex[:12]
+        self.trace_dir = Path(trace_dir) if trace_dir else default_trace_dir()
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.path = self.trace_dir / f"aidev-trace-{stamp}-{self.run_id}.jsonl"
+        self._events = 0
+        self._ensure_parent()
+
+    def _ensure_parent(self) -> None:
+        try:
+            self.trace_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as error:
+            # Não quebra nada: cada record() tenta de novo e loga.
+            logger.warning("Trace: não foi possível criar %s: %s",
+                           self.trace_dir, error)
+
+    def record(self, event: str, **fields: Any) -> None:
+        """Anexa um evento ao JSONL. Nunca levanta exceção."""
+
+        payload: dict[str, Any] = {
+            "run_id": self.run_id,
+            "timestamp": _utcnow_iso(),
+            "event": event,
+        }
+        for key, value in fields.items():
+            try:
+                json.dumps(value, ensure_ascii=False, default=str)
+                payload[key] = value
+            except Exception:
+                try:
+                    payload[key] = str(value)
+                except Exception:
+                    payload[key] = "<unrepresentable>"
+
+        try:
+            self.trace_dir.mkdir(parents=True, exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False,
+                                        default=str) + "\n")
+            self._events += 1
+        except Exception as error:
+            logger.warning("Trace: falha ao persistir evento '%s': %s",
+                           event, error)
+
+    @property
+    def event_count(self) -> int:
+        return self._events
+
+    def read_events(self) -> list[dict[str, Any]]:
+        """Lê de volta os eventos persistidos (diagnóstico/testes)."""
+        events: list[dict[str, Any]] = []
+        with open(self.path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if line:
+                    events.append(json.loads(line))
+        return events
+
+
+class NullTrace:
+    """Trace desativado com a mesma API (`record` vira no-op)."""
+
+    run_id = "disabled"
+    path = None
+    event_count = 0
+
+    def record(self, event: str, **fields: Any) -> None:
+        return None
+
+    def read_events(self) -> list[dict[str, Any]]:
+        return []
