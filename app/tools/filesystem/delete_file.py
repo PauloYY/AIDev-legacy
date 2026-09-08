@@ -17,9 +17,9 @@ def _is_protected(relative_path: str) -> str | None:
     for part in parts:
         if part in PROTECTED_PATH_PARTS:
             return (
-                f"DELETE_ERROR: caminho protegido ('{part}'). "
-                "Remoção de controle de versão ou estado interno "
-                "do agente não é permitida via delete_file."
+                f"DELETE_ERROR: protected path ('{part}'). "
+                "Removing version control or internal agent state "
+                "via delete_file is not allowed."
             )
     return None
 
@@ -28,7 +28,7 @@ def delete_file(project_name: str, file_path: str) -> str:
     """Remove um arquivo do workspace (sem recursão de diretórios)."""
     if not isinstance(file_path, str) or not file_path.strip():
         raise ValueError(
-            "DELETE_ERROR: 'file_path' não pode ser vazio."
+            "DELETE_ERROR: 'file_path' cannot be empty."
         )
 
     projects_dir = get_projects_dir()
@@ -37,11 +37,11 @@ def delete_file(project_name: str, file_path: str) -> str:
 
     if not project_dir.is_relative_to(projects_dir):
         raise PermissionError(
-            "Acesso fora do diretório de projetos não permitido."
+            "Access outside the projects directory is not allowed."
         )
 
     if not target.is_relative_to(project_dir):
-        raise PermissionError("Acesso fora do projeto não permitido.")
+        raise PermissionError("Access outside the project is not allowed.")
 
     protected_reason = _is_protected(file_path)
     if protected_reason is not None:
@@ -50,16 +50,16 @@ def delete_file(project_name: str, file_path: str) -> str:
     # Nunca remover a raiz do projeto em si.
     if target == project_dir:
         raise PermissionError(
-            "DELETE_ERROR: não é permitido remover a raiz do projeto."
+            "DELETE_ERROR: removing the project root is not allowed."
         )
 
     if not target.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
+        raise FileNotFoundError(f"File not found: {file_path}")
 
     if not target.is_file():
         raise IsADirectoryError(
-            f"O caminho não é um arquivo (diretórios não são "
-            f"removidos via delete_file): {file_path}"
+            f"Path is not a file (directories cannot be "
+            f"removed via delete_file): {file_path}"
         )
 
     # Symlinks: remover o link, nunca seguir para fora do projeto.
@@ -73,10 +73,10 @@ definition = {
     "function": {
         "name": "delete_file",
         "description": (
-            "Remove um arquivo claramente desnecessário do projeto "
-            "(ex.: temporário, duplicado ou substituído). Não remove "
-            "diretórios nem caminhos protegidos (.git, .aidev). "
-            "Retorna erro controlado se o arquivo não existir."
+            "Removes a clearly unnecessary file from the project "
+            "(e.g. temporary, duplicated or superseded). Does not "
+            "remove directories or protected paths (.git, .aidev). "
+            "Returns a controlled error if the file does not exist."
         ),
         "parameters": {
             "type": "object",

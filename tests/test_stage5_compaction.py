@@ -86,8 +86,8 @@ def _fill_memory(memory, n=15, fail_at=None):
         if failed and tool != "run_command":
             tool, args = "run_command", {
                 "project_name": "p", "command": "python -m pytest -q"}
-        result = ("STATUS: falha (exit code 1)\nFAILED test_x"
-                  if failed else "STATUS: sucesso (exit code 0)\nok")
+        result = ("STATUS: failure (exit code 1)\nFAILED test_x"
+                  if failed else "STATUS: success (exit code 0)\nok")
         memory.record(iteration=i, tool=tool, arguments=args,
                       result=result, success=not failed)
 
@@ -234,7 +234,7 @@ def test_old_irrelevant_history_can_be_dropped():
     full = memory.render_history()
     compact = memory.render_history_compact()
     assert len(compact) < len(full)
-    assert "omitida(s)" in compact
+    assert "earlier action(s) omitted" in compact
     # A ação mais antiga (sucesso) não precisa estar lá.
     assert "[1]" not in compact
 
@@ -257,7 +257,7 @@ def test_recent_errors_are_kept():
     memory.record(iteration=14, tool="run_command",
                   arguments={"project_name": "p",
                              "command": "python -m pytest -q"},
-                  result="STATUS: falha (exit code 1)\nFAILED test_y",
+                  result="STATUS: failure (exit code 1)\nFAILED test_y",
                   success=False)
     for i in (15, 16, 17):
         memory.record(iteration=i, tool="write_file",
@@ -266,8 +266,8 @@ def test_recent_errors_are_kept():
                       result="ok", success=True)
     compact = memory.render_history_compact()
     assert "[14]" in compact  # falha recente dentro da janela
-    assert "falha anterior preservada" in compact  # iter 2 resgatado
-    assert "STATUS: falha" in compact
+    assert "earlier failure preserved" in compact  # iter 2 resgatado
+    assert "STATUS: failure" in compact
 
 
 # --------------------------------------------------------------------------
@@ -292,15 +292,15 @@ def test_big_results_shrink_without_losing_status(tmp_path):
             result=FinalVerificationResult(FinalVerificationResult.OK)),
         execution_trace=NullTrace(),
     )
-    big = ("STATUS: sucesso (exit code 0)\n" + "y" * 3000
+    big = ("STATUS: success (exit code 0)\n" + "y" * 3000
            + "\nCAUDA-MARCADOR-FINAL-12345")
     out = runner._truncate_compact(big)
     assert len(out) <= Runner.MAX_COMPACT_RESULT_CHARS + 200
-    assert "STATUS: sucesso (exit code 0)" in out
+    assert "STATUS: success (exit code 0)" in out
     assert "CAUDA-MARCADOR-FINAL-12345" in out
-    assert "compactado" in out
+    assert "compacted" in out
     # Pequenos voltam intactos.
-    small = "STATUS: sucesso (exit code 0)\nok"
+    small = "STATUS: success (exit code 0)\nok"
     assert runner._truncate_compact(small) == small
 
 
@@ -322,11 +322,11 @@ def test_test_results_keep_failures():
             result=FinalVerificationResult(FinalVerificationResult.OK)),
         execution_trace=NullTrace(),
     )
-    big_fail = ("STATUS: falha (exit code 1)\n" + "log\n" * 800
+    big_fail = ("STATUS: failure (exit code 1)\n" + "log\n" * 800
                 + "FAILED test_login.py::test_x - assert 1 == 2\n"
                 + "Traceback (most recent call last): ... line 42\n")
     out = runner._truncate_compact(big_fail)
-    assert "STATUS: falha (exit code 1)" in out
+    assert "STATUS: failure (exit code 1)" in out
     assert "FAILED test_login.py::test_x" in out
     assert "line 42" in out
 
@@ -347,7 +347,7 @@ def test_current_state_stays_available(projects_root, monkeypatch):
 
     class _Pending(T.FakeErrorChecklist):
         def render(self):
-            return "CHECKLIST DE ERROS ATUAIS\n- 1. teste_x falhou"
+            return "CURRENT ERROR CHECKLIST\n- 1. teste_x falhou"
 
         @property
         def pending_count(self):
@@ -355,7 +355,7 @@ def test_current_state_stays_available(projects_root, monkeypatch):
 
     class _Check(T.FakeChecklist):
         def render(self):
-            return "CHECKLIST DO OBJETIVO\n[x] 1. construir"
+            return "OBJECTIVE CHECKLIST\n[x] 1. construir"
 
     runner = Runner(
         planner=T.FakePlanner([]),
@@ -377,7 +377,7 @@ def test_current_state_stays_available(projects_root, monkeypatch):
     assert "- a.py" in block
     assert "construir" in block
     assert "teste_x falhou" in block
-    assert "RESUMO DO PROJETO" in block
+    assert "PROJECT SUMMARY" in block
 
 
 def test_duplicated_info_is_removed():
@@ -445,9 +445,9 @@ def test_first_decision_gets_correct_context(projects_root, monkeypatch):
                       project_name="p") == "done"
     first = provider.prompts[0]
     assert "meu objetivo inicial" in first
-    assert "ARQUIVOS ATUAIS DO PROJETO" in first
+    assert "CURRENT PROJECT FILES" in first
     assert "- a.py" in first
-    assert "Nenhuma ação executada ainda" in first
+    assert "No actions executed yet" in first
     assert "Return ONLY valid JSON" in first
 
 
@@ -495,7 +495,7 @@ def test_decision_after_error_gets_error_context(
     # importa é que o RESULTADO e o histórico chegam ao finish.
     runner.run(objective="obj", project_name="p")
     assert len(seen) == 2
-    assert "RESULTADO DA EXECUÇÃO" in seen[1]
+    assert "EXECUTION RESULT" in seen[1]
     assert "STATUS:" in seen[1]
     assert "run_command" in seen[1]
 
@@ -716,7 +716,7 @@ def test_disabling_compaction_restores_legacy(projects_root, monkeypatch):
     )
     big = "z" * 6000
     assert runner._truncate_for_planner(big) == runner._truncate(big)
-    assert "compactado" not in runner._truncate_for_planner(big)
+    assert "compacted" not in runner._truncate_for_planner(big)
 
     # Bloco de memória integral com flag off.
     memory = OperationalMemory(tools)
@@ -733,8 +733,8 @@ def test_compact_breakdown_sums_to_compact_prompt():
     """Breakdown do compacto soma no prompt compacto enviado."""
     from app.agent.planning.prompt_sections import summarize_measurements
     planner = _planner()
-    ctx = ("RESUMO DO PROJETO:\ns\n\nHISTÓRICO DE AÇÕES:\n[1] ok\n\n"
-           "ARQUIVOS ATUAIS DO PROJETO:\n- a.py\n")
+    ctx = ("PROJECT SUMMARY:\ns\n\nACTION HISTORY:\n[1] ok\n\n"
+           "CURRENT PROJECT FILES:\n- a.py\n")
     sections = planner.build_compact_prompt_sections("obj", ctx)
     measured = planner.measure_prompt_sections(sections)
     totals = summarize_measurements(measured)
@@ -753,7 +753,7 @@ def test_no_destructive_truncation():
     assert "Return ONLY valid JSON" in prompt
     # Nenhum marcador de truncamento arbitrário no template.
     assert "[truncated" not in prompt
-    assert "caracteres omitidos" not in prompt
+    assert "characters omitted" not in prompt
 
 
 def test_error_tail_is_capped_but_markers_kept(tmp_path, monkeypatch):
@@ -775,14 +775,14 @@ def test_error_tail_is_capped_but_markers_kept(tmp_path, monkeypatch):
             result=FinalVerificationResult(FinalVerificationResult.OK)),
         execution_trace=NullTrace(),
     )
-    context = "RESUMO DO PROJETO:\nbase"
+    context = "PROJECT SUMMARY:\nbase"
     for i in range(5):
         context = runner._append_context_error(
-            context, f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\nbloco {i}")
-    assert context.count("ERRO DE VALIDAÇÃO ANTES DO FINISH") == 2
+            context, f"VALIDATION ERROR BEFORE FINISH:\nbloco {i}")
+    assert context.count("VALIDATION ERROR BEFORE FINISH") == 2
     assert "bloco 4" in context and "bloco 3" in context
-    assert "omitido(s)" in context
-    assert "RESUMO DO PROJETO" in context
+    assert "earlier error block(s) omitted" in context
+    assert "PROJECT SUMMARY" in context
 
 
 def test_summary_is_capped_in_compact_block(monkeypatch):
@@ -806,4 +806,4 @@ def test_summary_is_capped_in_compact_block(monkeypatch):
     )
     block = runner._build_memory_block_compact("p", "S" * 5000)
     assert len(block) < 5000
-    assert "resumo compactado" in block
+    assert "summary compacted" in block

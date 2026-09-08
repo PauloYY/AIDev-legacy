@@ -55,7 +55,7 @@ def _exec_for(task):
 
 class _RecordingChecklist(T.FakeChecklist):
     def render(self):
-        return "CHECKLIST DO OBJETIVO\n[x] 1. construir o projeto"
+        return "OBJECTIVE CHECKLIST\n[x] 1. construir o projeto"
 
 
 class _PendingErrorChecklist(T.FakeErrorChecklist):
@@ -63,7 +63,7 @@ class _PendingErrorChecklist(T.FakeErrorChecklist):
         self.items = ["teste_x falhou: esperado 1, obteve 2"]
 
     def render(self):
-        return "CHECKLIST DE ERROS ATUAIS\n- 1. teste_x falhou"
+        return "CURRENT ERROR CHECKLIST\n- 1. teste_x falhou"
 
     @property
     def pending_count(self):
@@ -225,7 +225,7 @@ def test_compact_context_keeps_objective_and_state(
     assert planner.objectives and all(o == "obj" for o in planner.objectives)
     # Estado atual: listagem integral quando a estrutura mudou.
     assert "- a.py" in planner.received_contexts[0]
-    assert "ARQUIVOS ATUAIS DO PROJETO" in planner.received_contexts[0]
+    assert "CURRENT PROJECT FILES" in planner.received_contexts[0]
     assert "construir o projeto" in planner.received_contexts[0]
 
 
@@ -245,7 +245,7 @@ def test_compact_context_preserves_pending_errors(
     runner._file_list_state = None
     block = runner._build_memory_block_tracked("p", "resumo")
 
-    assert "CHECKLIST DE ERROS ATUAIS" in block
+    assert "CURRENT ERROR CHECKLIST" in block
     assert "teste_x falhou" in block
     assert "- a.py" in block
 
@@ -265,8 +265,8 @@ def test_unchanged_file_list_is_compact_but_explicit(
     assert isinstance(state1, str) and state1
 
     text2, state2 = memory.render_files_state("p", state1)
-    assert "sem alterações" in text2
-    assert "1 arquivo(s)" in text2
+    assert "no changes since last check" in text2
+    assert "1 file(s)" in text2
     assert state2 == state1
 
     write_file("p", "b.py", "y = 2\n")
@@ -281,7 +281,7 @@ def test_unchanged_file_list_is_compact_but_explicit(
 
 def test_big_dependency_results_are_capped_head_first():
     """Caso 6: output gigante vira cabeça + marcador (nunca silencioso)."""
-    big = "STATUS: sucesso (exit code 0)\n" + "y" * 60000
+    big = "STATUS: success (exit code 0)\n" + "y" * 60000
     builder = TaskContextBuilder(max_result_chars=4000)
     task = _task("write_file", {"project_name": "p"},
                  dependencies=[Dependency(
@@ -290,16 +290,16 @@ def test_big_dependency_results_are_capped_head_first():
                                 "command": "pytest"})])
     out = builder.build(task, [big])
 
-    assert out.startswith("TASK PAI:")
-    assert "STATUS: sucesso (exit code 0)" in out
-    assert "resultado truncado" in out
+    assert out.startswith("PARENT TASK:")
+    assert "STATUS: success (exit code 0)" in out
+    assert "truncated result" in out
     assert "600" in out  # total indicado
     assert len(out) < 5000
 
 
 def test_small_results_untouched_and_legacy_default_integral():
     """Sem limite (legado) ou resultado pequeno: byte-idêntico."""
-    small = "STATUS: sucesso (exit code 0)\nok"
+    small = "STATUS: success (exit code 0)\nok"
     task = _task("write_file", {"project_name": "p"},
                  dependencies=[Dependency(
                      tool="run_command",
@@ -321,7 +321,7 @@ def test_error_checklist_still_receives_full_result(tmp_path,
     de resultado integral em test_fase6_unified_errors.py).
     """
     monkeypatch.setattr(Config, "error_analyzer", False)
-    big = "STATUS: falha (exit code 1)\n" + "E" * 60000
+    big = "STATUS: failure (exit code 1)\n" + "E" * 60000
     checklist = _RecordingErrorChecklist()
     runner = _runner([], [], NullTrace(),
                      operational_memory=OperationalMemory(
@@ -334,7 +334,7 @@ def test_error_checklist_still_receives_full_result(tmp_path,
 
     assert len(checklist.captured) == 1
     assert checklist.captured[0][1] == big
-    assert "STATUS: falha (exit code 1)" in checklist.captured[0][1]
+    assert "STATUS: failure (exit code 1)" in checklist.captured[0][1]
 
 
 # --------------------------------------------------------------------------
@@ -469,7 +469,7 @@ def test_write_then_read_sees_written_content(projects_root, tmp_path,
     assert runner.run(objective="obj", project_name="p") == "done"
     # contexts[0]=iter1, [1]=iter2 (traz o RESULTADO do write),
     # [2]=iter3/finish (traz o RESULTADO do read da iter2).
-    assert "Arquivo escrito com sucesso" in planner.received_contexts[1]
+    assert "File written successfully" in planner.received_contexts[1]
     assert "conteudo-x-123" in planner.received_contexts[2]
 
 
@@ -773,7 +773,7 @@ def test_legacy_full_listing_when_compact_off(projects_root, tmp_path,
 
     assert runner.run(objective="obj", project_name="p") == "done"
     assert "- a.py" in planner.received_contexts[1]
-    assert "sem alterações" not in planner.received_contexts[1]
+    assert "no changes since last check" not in planner.received_contexts[1]
 
 
 # --------------------------------------------------------------------------

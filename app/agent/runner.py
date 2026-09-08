@@ -865,7 +865,7 @@ class Runner:
         try:
             result = self.tools.execute(tool_name, task.arguments)
         except Exception as tool_error:
-            result = f"ERRO NA INVESTIGAÇÃO: {tool_error}"
+            result = f"INVESTIGATION ERROR: {tool_error}"
 
         self._note_tool_execution(tool_name)
 
@@ -900,16 +900,16 @@ class Runner:
 
         return self._append_context_error(
             context,
-            "INVESTIGAÇÃO REALIZADA COMO ÚLTIMO RECURSO (você insistiu "
-            f"em usar '{tool_name}' como task principal mesmo após "
-            "vários avisos — em vez de travar a run, a investigação foi "
-            "executada por você desta vez):\n\n"
+            "INVESTIGATION PERFORMED AS A LAST RESORT (you insisted "
+            f"on using '{tool_name}' as the main task even after "
+            "several warnings — instead of crashing the run, the "
+            "investigation was executed for you this time):\n\n"
             f"{tool_name}({task.arguments}) ->\n"
             f"{self._truncate_for_planner(result)}\n\n"
-            "Isso NÃO é permissão geral: continue anexando "
-            "read_file/list_files/find_references como dependency da "
-            "ação real, exceto logo após um teste/build falhar. Agora "
-            "escolha a próxima AÇÃO REAL usando essa informação.",
+            "This is NOT a general permission: keep attaching "
+            "read_file/list_files/find_references as a dependency of "
+            "the real action, except right after a failed test/build. "
+            "Now choose the next REAL ACTION using this information.",
         )
 
     def _command_succeeded(self, tool: str, result) -> bool:
@@ -924,12 +924,12 @@ class Runner:
 
         if tool == "run_command":
             # O formato é controlado por run_command._format_result, cuja
-            # primeira linha é sempre o veredito real ("STATUS: sucesso
-            # (exit code 0)" ou "STATUS: falha ..."). Buscar no texto
+            # primeira linha é sempre o veredito real ("STATUS: success
+            # (exit code 0)" ou "STATUS: failure ..."). Buscar no texto
             # inteiro gerava falso-positivo quando a saída do comando
-            # continha o literal "STATUS: sucesso" apesar de falhar.
+            # continha o literal "STATUS: success" apesar de falhar.
             first_line = str(result).lstrip().split("\n", 1)[0]
-            return first_line.startswith("STATUS: sucesso")
+            return first_line.startswith("STATUS: success")
 
         return True
 
@@ -950,7 +950,7 @@ class Runner:
             )
         except Exception as error:
             return (
-                f"ERRO NA DEPENDENCY:\n"
+                f"DEPENDENCY ERROR:\n"
                 f"{type(error).__name__}: {error}",
                 False,
                 error,
@@ -1011,14 +1011,14 @@ class Runner:
         text = str(result).lstrip()
 
         if text.startswith("TIMEOUT:") or text.startswith(
-            "ERRO NA EXECUÇÃO DA TOOL:"
+            "TOOL EXECUTION ERROR:"
         ):
             # Infraestrutura, não evidência de teste: não descarta os
             # itens reais anteriores nem finge que está tudo certo.
             reason = (
-                "excedeu o tempo limite"
+                "timed out"
                 if text.startswith("TIMEOUT:")
-                else "falhou por erro de infraestrutura"
+                else "failed with an infrastructure error"
             )
             self.error_checklist.note_infra_failure(command, reason)
             # Fase 4: infra também é problema (não bloqueia geração
@@ -1129,7 +1129,7 @@ class Runner:
 
         return (
             f"{text[:self.MAX_CONTEXT_CHARS]}\n"
-            f"...[truncado, {omitted} caracteres omitidos]"
+            f"...[truncated, {omitted} characters omitted]"
         )
 
     # ---------- Etapa 5: compactação p/ o Planner (veredito primeiro) ----------
@@ -1151,7 +1151,7 @@ class Runner:
         """Head+tail com veredito preservado (Etapa 5).
 
         Mantém o início (STATUS na 1ª linha do run_command, header
-        TASK PAI no task_context) e o fim (resumo do pytest, traceback
+        PARENT TASK no task_context) e o fim (resumo do pytest, traceback
         final, última falha) — o meio omitido é log verboso. Marca a
         omissão com o total, nunca silenciosa. Textos <= 2000 voltam
         intactos (byte-idênticos ao legado).
@@ -1165,7 +1165,7 @@ class Runner:
         omitted = len(text) - head - tail
         return (
             f"{text[:head]}\n"
-            f"...[compactado, {omitted} caracteres omitidos]\n"
+            f"...[compacted, {omitted} characters omitted]\n"
             f"{text[-tail:]}"
         )
 
@@ -1195,7 +1195,7 @@ class Runner:
         omitted = len(text) - limit
         return (
             f"{text[:limit]}\n"
-            f"...[resumo compactado, {omitted} caracteres omitidos]"
+            f"...[summary compacted, {omitted} characters omitted]"
         )
 
     def _append_context_error(self, context: str, block: str) -> str:
@@ -1204,8 +1204,9 @@ class Runner:
         Legado (flag off): concatenação pura, como antes.
         Compacto: mantém no máximo MAX_ERROR_TAIL_BLOCKS blocos de
         erro na cauda — o mais antigo além do teto é descartado, com
-        marcador explícito. Blocos considerados: ERRO DE *,
-        CORREÇÃO DA TENTATIVA, ERRO REPETIDO, INVESTIGAÇÃO REALIZADA.
+        marcador explícito. Blocos considerados: VALIDATION ERROR,
+        REPETITION*, PREVIOUS ATTEMPT CORRECTION, REPEATED ERROR,
+        INVESTIGATION PERFORMED.
         """
         context = str(context or "")
         block = str(block or "")
@@ -1213,10 +1214,11 @@ class Runner:
             return f"{context}\n\n{block}" if context else block
         combined = f"{context}\n\n{block}" if context else block
         markers = (
-            "\n\nERRO DE ",
-            "\n\nCORREÇÃO DA TENTATIVA",
-            "\n\nERRO REPETIDO",
-            "\n\nINVESTIGAÇÃO REALIZADA",
+            "\n\nVALIDATION ERROR",
+            "\n\nREPETITION",
+            "\n\nPREVIOUS ATTEMPT CORRECTION",
+            "\n\nREPEATED ERROR",
+            "\n\nINVESTIGATION PERFORMED",
         )
         # Localiza todos os inícios de bloco de erro na cauda.
         starts: list[int] = []
@@ -1240,7 +1242,7 @@ class Runner:
         tail = combined[keep_from:]
         return (
             f"{prefix}"
-            f"...[{dropped} bloco(s) de erro anterior(es) omitido(s)]\n\n"
+            f"...[{dropped} earlier error block(s) omitted]\n\n"
             f"{tail}"
         )
 
@@ -1275,7 +1277,7 @@ class Runner:
                 project_name, files_text)
 
         return (
-            f"RESUMO DO PROJETO:\n"
+            f"PROJECT SUMMARY:\n"
             f"{summary}\n\n"
             f"{self.checklist.render()}\n\n"
             + (f"{error_block}\n\n" if error_block else "")
@@ -1335,7 +1337,7 @@ class Runner:
             planner_errors_text = self.planner_error_memory.render()
 
         return (
-            f"RESUMO DO PROJETO:\n"
+            f"PROJECT SUMMARY:\n"
             f"{self._truncate_summary_compact(summary)}\n\n"
             f"{self.checklist.render()}\n\n"
             + (f"{error_block}\n\n" if error_block else "")
@@ -1469,10 +1471,10 @@ class Runner:
         self._emit(
             "tool_end",
             name=self.FINISH_CHECK_TOOL,
-            success="FALHOU" not in result,
+            success="FAILED" not in result,
         )
 
-        if "FALHOU" in result:
+        if "FAILED" in result:
             return result
 
         return None
@@ -1632,7 +1634,7 @@ class Runner:
                 result = self.tools.execute("delete_file", arguments)
             except Exception as error:
                 result = (
-                    "ERRO NA EXECUÇÃO DA TOOL:\n"
+                    "TOOL EXECUTION ERROR:\n"
                     f"{type(error).__name__}: {error}"
                 )
                 succeeded = False
@@ -1675,10 +1677,10 @@ class Runner:
                     state.record_progress(
                         iteration, "delete_file", succeeded,
                         file_path=file_path,
-                        note=("cleanup: arquivo desnecessário (SAFE) "
-                              "removido na verificação final"
+                        note=("cleanup: unnecessary file (SAFE) "
+                              "removed in final verification"
                               if succeeded else
-                              "cleanup: falha ao remover arquivo"),
+                              "cleanup: failed to remove file"),
                     )
                     self._save_task_state("cleanup")
             except Exception as error:
@@ -1705,7 +1707,7 @@ class Runner:
             "unnecessary_files_recheck",
             check_error is None,
             str(check_error)[:200] if check_error else (
-                f"{len(removed)} arquivo(s) removido(s), "
+                f"{len(removed)} file(s) removed, "
                 "check_project OK"),
             iteration)
         trace.record(
@@ -2062,26 +2064,26 @@ class Runner:
                     # (não pula tentativa nenhuma, só melhora o pedido).
                     if already_forbidden:
                         planner_retry_context = (
-                            "ERRO REPETIDO — LEIA COM ATENÇÃO:\n"
+                            "REPEATED ERROR — READ CAREFULLY:\n"
                             f"{type(error).__name__}: {error}\n\n"
-                            "Você JÁ cometeu esse EXATO erro antes "
-                            "nesta run e está proibido de repeti-lo. "
-                            "A tentativa anterior de corrigir não "
-                            "funcionou — não repita a mesma decisão "
-                            "de novo. Mude a tool, os argumentos, ou a "
-                            "abordagem de forma diferente da tentativa "
-                            "anterior.\n"
-                            "Não execute ferramentas.\n"
-                            "Retorne somente o JSON de decisão "
-                            "esperado pelo Planner."
+                            "You ALREADY made this EXACT mistake before "
+                            "in this run and are forbidden from repeating "
+                            "it. The previous fix attempt did not "
+                            "work — do not repeat the same decision "
+                            "again. Change the tool, the arguments, or "
+                            "the approach differently from the previous "
+                            "attempt.\n"
+                            "Do not execute tools.\n"
+                            "Return only the decision JSON "
+                            "expected by the Planner."
                         )
                     else:
                         planner_retry_context = (
-                            "CORREÇÃO DA TENTATIVA ANTERIOR:\n"
+                            "PREVIOUS ATTEMPT CORRECTION:\n"
                             f"{type(error).__name__}: {error}\n\n"
-                            "A resposta anterior foi inválida.\n"
-                            "Não execute ferramentas.\n"
-                            "Retorne somente o JSON de decisão esperado pelo Planner."
+                            "The previous response was invalid.\n"
+                            "Do not execute tools.\n"
+                            "Return only the decision JSON expected by the Planner."
                         )
 
                     # Mede DEPOIS de definir o retry_context, para o
@@ -2215,13 +2217,13 @@ class Runner:
 
                     context = self._append_context_error(
                         context,
-                        f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
-                        "Você tentou finalizar, mas a checagem "
-                        "check_project encontrou problemas que "
-                        "precisam ser corrigidos antes:\n\n"
+                        f"VALIDATION ERROR BEFORE FINISH:\n"
+                        "You tried to finish, but the check_project "
+                        "check found problems that must be fixed "
+                        "first:\n\n"
                         f"{self._truncate_for_planner(check_error)}\n\n"
-                        "Corrija os problemas acima antes de tentar "
-                        "finalizar novamente.",
+                        "Fix the problems above before trying to "
+                        "finish again.",
                     )
 
                     task_history.clear()
@@ -2267,13 +2269,13 @@ class Runner:
 
                     context = self._append_context_error(
                         context,
-                        f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
-                        "Você tentou finalizar, mas o último "
-                        "teste/build rodado ainda está falhando:\n\n"
+                        f"VALIDATION ERROR BEFORE FINISH:\n"
+                        "You tried to finish, but the last "
+                        "test/build run is still failing:\n\n"
                         f"{self._truncate_for_planner(error_block)}\n\n"
-                        "Corrija essas falhas e rode o teste/build de "
-                        "novo, confirmando que ele passa, antes de "
-                        "tentar finalizar de novo.",
+                        "Fix those failures and re-run the test/build, "
+                        "confirming it passes, before trying to "
+                        "finish again.",
                     )
 
                     task_history.clear()
@@ -2327,13 +2329,13 @@ class Runner:
 
                     context = self._append_context_error(
                         context,
-                        f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
-                        "Você tentou finalizar, mas a verificação "
-                        "final do projeto encontrou problemas que "
-                        "precisam ser corrigidos antes:\n\n"
+                        f"VALIDATION ERROR BEFORE FINISH:\n"
+                        "You tried to finish, but the final project "
+                        "verification found problems that must be "
+                        "fixed first:\n\n"
                         f"{self._truncate_for_planner(final_check_error)}\n\n"
-                        "Corrija os problemas acima antes de tentar "
-                        "finalizar novamente.",
+                        "Fix the problems above before trying to "
+                        "finish again.",
                     )
 
                     task_history.clear()
@@ -2369,15 +2371,14 @@ class Runner:
 
                     context = self._append_context_error(
                         context,
-                        f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
-                        "Você tentou finalizar e a verificação removeu "
-                        "arquivo(s) claramente desnecessário(s), mas a "
-                        "revalidação (check_project) após a remoção "
-                        "encontrou problemas que precisam ser corrigidos "
-                        "antes:\n\n"
+                        f"VALIDATION ERROR BEFORE FINISH:\n"
+                        "You tried to finish and the verification removed "
+                        "clearly unnecessary file(s), but the re-check "
+                        "(check_project) after the removal found problems "
+                        "that must be fixed first:\n\n"
                         f"{self._truncate_for_planner(cleanup_error)}\n\n"
-                        "Corrija os problemas acima antes de tentar "
-                        "finalizar novamente.",
+                        "Fix the problems above before trying to "
+                        "finish again.",
                     )
 
                     task_history.clear()
@@ -2512,31 +2513,32 @@ class Runner:
             if loop_signatures is not None or is_stagnant:
                 if is_stagnant and loop_signatures is None:
                     error = (
-                        f"O Planner executou {stagnant_iterations} tasks "
-                        "seguidas sem produzir nenhuma alteração real."
+                        f"The Planner ran {stagnant_iterations} tasks "
+                        "in a row without producing any real change."
                     )
                     detail = (
-                        "O agente está apenas lendo arquivos e rodando "
-                        "comandos de verificação repetidamente, sem "
-                        "escrever nenhuma mudança nova. Pare de investigar "
-                        "e faça a próxima ação de fato necessária, "
-                        "ou use finish/fail se não for possível avançar."
+                        "The agent is only reading files and running "
+                        "verification commands repeatedly, without "
+                        "writing any new change. Stop investigating "
+                        "and take the next action that is actually "
+                        "needed, or use finish/fail if no progress is "
+                        "possible."
                     )
                 else:
                     error = (
-                        "O Planner está preso em um padrão de tasks "
-                        "repetidas sem produzir progresso."
+                        "The Planner is stuck in a pattern of repeated "
+                        "tasks without making progress."
                     )
                     tasks_desc = "\n".join(
                         f"- tool={tool}, args={self._truncate_for_planner(args)}"
                         for tool, args in (loop_signatures or [])
                     )
                     detail = (
-                        f"Tasks envolvidas no loop:\n{tasks_desc}\n\n"
-                        "Não repita nenhuma dessas ações. Analise o "
-                        "estado atual do projeto e escolha uma ação "
-                        "diferente, ou use finish caso o objetivo já "
-                        "tenha sido concluído."
+                        f"Tasks involved in the loop:\n{tasks_desc}\n\n"
+                        "Do not repeat any of these actions. Analyze "
+                        "the current project state and choose a "
+                        "different action, or use finish if the "
+                        "objective is already done."
                     )
 
                 self._emit("planner_error", error=error)
@@ -2552,7 +2554,7 @@ class Runner:
 
                 context = self._append_context_error(
                     context,
-                    f"ERRO DE REPETIÇÃO/ESTAGNAÇÃO:\n"
+                    f"REPETITION/STAGNATION ERROR:\n"
                     f"{error}\n\n"
                     f"{detail}",
                 )
@@ -2596,7 +2598,7 @@ class Runner:
                         )
                         if item.success
                         else (
-                            "ERRO NO BATCH PARALELO:\n"
+                            "PARALLEL BATCH ERROR:\n"
                             f"{type(item.error).__name__}: {item.error}",
                             False,
                             item.error,
@@ -2780,19 +2782,19 @@ class Runner:
 
                     task_context = (
                         f"{task_context}\n\n"
-                        f"ERRO NA DECISÃO DE EXECUÇÃO:\n"
+                        f"EXECUTION DECISION ERROR:\n"
                         f"{type(error).__name__}: {error}\n\n"
-                        "A decisão de execução anterior era inválida. "
-                        "Analise o erro e tente novamente seguindo "
-                        "rigorosamente as regras da task."
+                        "The previous execution decision was invalid. "
+                        "Analyze the error and try again, strictly "
+                        "following the task rules."
                     )
 
                     continue
 
                 if execution.tool != task.tool:
                     error = (
-                        "A LLM tentou executar uma tool diferente "
-                        "da tool definida na task."
+                        "The LLM tried to execute a different tool "
+                        "from the one defined in the task."
                     )
 
                     self._emit(
@@ -2826,11 +2828,11 @@ class Runner:
 
                     task_context = (
                         f"{task_context}\n\n"
-                        f"ERRO NA DECISÃO DE EXECUÇÃO:\n"
+                        f"EXECUTION DECISION ERROR:\n"
                         f"{error}\n\n"
-                        f"Tool esperada: {task.tool}\n"
-                        f"Tool recebida: {execution.tool}\n\n"
-                        "Corrija a decisão e tente novamente."
+                        f"Expected tool: {task.tool}\n"
+                        f"Received tool: {execution.tool}\n\n"
+                        "Fix the decision and try again."
                     )
 
                     continue
@@ -2876,11 +2878,10 @@ class Runner:
 
                     task_context = (
                         f"{task_context}\n\n"
-                        f"ERRO DE VALIDAÇÃO DE ARGUMENTOS:\n"
+                        f"ARGUMENT VALIDATION ERROR:\n"
                         f"{error}\n\n"
-                        "Corrija os argumentos usando exatamente os "
-                        "nomes de parâmetro esperados pela tool e "
-                        "tente novamente."
+                        "Fix the arguments using exactly the parameter "
+                        "names expected by the tool and try again."
                     )
 
                     continue
@@ -2921,8 +2922,8 @@ class Runner:
                 == progress_epoch
             ):
                 error = (
-                    "O Executor tentou repetir uma operação que já foi "
-                    "executada com sucesso anteriormente."
+                    "The Executor tried to repeat an operation that was "
+                    "already executed successfully before."
                 )
 
                 self._emit("executor_error", error=error)
@@ -2943,15 +2944,16 @@ class Runner:
 
                 context = self._append_context_error(
                     context,
-                    f"ERRO DE REPETIÇÃO:\n"
+                    f"REPETITION ERROR:\n"
                     f"{error}\n\n"
                     f"Tool: {execution.tool}\n"
-                    f"Argumentos: {self._truncate_for_planner(execution.arguments)}\n\n"
-                    "Essa exata operação já foi executada com sucesso "
-                    "antes; refazê-la é inútil, as mudanças já existem. "
-                    "Verifique o estado atual (list_files/read_file) e "
-                    "escolha a próxima ação realmente necessária, ou use "
-                    "finish caso o objetivo já tenha sido concluído.",
+                    f"Arguments: {self._truncate_for_planner(execution.arguments)}\n\n"
+                    "That exact operation was already executed "
+                    "successfully before; redoing it is useless, the "
+                    "changes already exist. Check the current state "
+                    "(list_files/read_file) and choose the next action "
+                    "that is really needed, or use finish if the "
+                    "objective is already done.",
                 )
 
                 task_history.clear()
@@ -2979,7 +2981,7 @@ class Runner:
 
             except Exception as error:
                 result = (
-                    f"ERRO NA EXECUÇÃO DA TOOL:\n"
+                    f"TOOL EXECUTION ERROR:\n"
                     f"{type(error).__name__}: {error}"
                 )
                 execution_succeeded = False
@@ -3124,6 +3126,6 @@ class Runner:
             context = (
                 f"{self._build_memory_block_tracked(project_name, summary)}\n\n"
                 f"{self._truncate_for_planner(task_context)}\n\n"
-                f"RESULTADO DA EXECUÇÃO:\n"
+                f"EXECUTION RESULT:\n"
                 f"{self._truncate_for_planner(result)}"
             )

@@ -172,9 +172,9 @@ def test_short_repair_success_skips_full_retry(tmp_path, projects_root):
     runner.run(objective="obj", project_name="p")
 
     assert len(provider.prompts) == 3
-    assert "CORREÇÃO DA TENTATIVA ANTERIOR" not in "".join(
+    assert "PREVIOUS ATTEMPT CORRECTION" not in "".join(
         provider.prompts)
-    assert "ERRO REPETIDO" not in "".join(provider.prompts)
+    assert "REPEATED ERROR" not in "".join(provider.prompts)
     assert [e["retry_type"] for e in _retry_events(trace)] == [
         "short_repair"]
 
@@ -201,8 +201,8 @@ def test_short_repair_failure_falls_back_to_full(tmp_path, projects_root):
     assert "CURRENT CONTEXT" in full1
     assert "CURRENT CONTEXT" not in short
     assert "CURRENT CONTEXT" in full2
-    assert ("CORREÇÃO DA TENTATIVA ANTERIOR" in full2
-            or "ERRO REPETIDO" in full2)
+    assert ("PREVIOUS ATTEMPT CORRECTION" in full2
+            or "REPEATED ERROR" in full2)
 
     retries = _retry_events(trace)
     assert [e["retry_type"] for e in retries] == [
@@ -266,7 +266,7 @@ def test_short_repair_fixes_schema_error(tmp_path, projects_root):
 def test_short_repair_fixes_unknown_tool(tmp_path):
     planner = _real_planner(ScriptedProvider([]))
     prompt = planner.build_repair_prompt(
-        error="Tool não encontrada: write_files",
+        error="Tool not found: write_files",
         raw_response='{"action": "task", "task": {"tool": "write_files"}}',
         tool_name="write_files",
     )
@@ -386,13 +386,13 @@ def test_repair_prompt_hints_and_no_full_context():
     planner = _real_planner(ScriptedProvider([]))
 
     dep = planner.build_repair_prompt(
-        error="A tool 'read_file' só pode ser usada como dependency, "
-              "não como task principal.",
+        error="The tool 'read_file' can only be used as a dependency, "
+              "not as the main task. It gathers information before a real action.",
         raw_response='{"action":"task"}', tool_name="read_file")
     assert "investigation" in dep
 
     js = planner.build_repair_prompt(
-        error="A LLM retornou um JSON inválido.", raw_response="{{{")
+        error="The LLM returned invalid JSON.", raw_response="{{{")
     assert "JSON" in js
 
     generic = planner.build_repair_prompt(
@@ -401,7 +401,7 @@ def test_repair_prompt_hints_and_no_full_context():
 
     for prompt in (dep, js, generic):
         assert "CURRENT CONTEXT" not in prompt
-        assert "RESUMO DO PROJETO" not in prompt
+        assert "PROJECT SUMMARY" not in prompt
         assert len(prompt) < 4000
 
 
@@ -422,8 +422,8 @@ def test_no_stale_retry_context_in_next_iteration(tmp_path, projects_root):
     runner.run(objective="obj", project_name="p")
 
     full_with_context = provider.prompts[2]
-    assert ("CORREÇÃO DA TENTATIVA ANTERIOR" in full_with_context
-            or "ERRO REPETIDO" in full_with_context)
+    assert ("PREVIOUS ATTEMPT CORRECTION" in full_with_context
+            or "REPEATED ERROR" in full_with_context)
     finish_prompt = provider.prompts[3]
-    assert "CORREÇÃO DA TENTATIVA ANTERIOR" not in finish_prompt
-    assert "ERRO REPETIDO" not in finish_prompt
+    assert "PREVIOUS ATTEMPT CORRECTION" not in finish_prompt
+    assert "REPEATED ERROR" not in finish_prompt

@@ -28,14 +28,14 @@ def test_edit_file_not_found(projects_root):
 def test_edit_old_text_not_found(projects_root):
     write_file("proj", "a.py", "x = 1\n")
 
-    with pytest.raises(ValueError, match="não encontrado"):
+    with pytest.raises(ValueError, match="not found"):
         edit_file("proj", "a.py", "y = 999", "y = 2")
 
 
 def test_edit_multiple_occurrences_rejected(projects_root):
     write_file("proj", "a.py", "a = 1\na = 1\n")
 
-    with pytest.raises(ValueError, match="múltiplas ocorrências"):
+    with pytest.raises(ValueError, match="multiple occurrences"):
         edit_file("proj", "a.py", "a = 1", "a = 2")
 
 
@@ -128,7 +128,7 @@ def test_edit_guides_toward_specific_snippet(projects_root):
     """Ambiguous error must tell the agent to be more specific."""
     write_file("proj", "a.py", "x = 1\nx = 1\n")
 
-    with pytest.raises(ValueError, match="mais específico"):
+    with pytest.raises(ValueError, match="more specific"):
         edit_file("proj", "a.py", "x = 1", "x = 2")
 
 

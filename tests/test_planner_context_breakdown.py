@@ -59,23 +59,23 @@ def _make_planner_with_mock_llm(tools, parser):
 
 def _full_context() -> str:
     return (
-        "RESUMO DO PROJETO:\n"
+        "PROJECT SUMMARY:\n"
         "summary text here\n\n"
-        "CHECKLIST DO OBJETIVO (definido uma única vez):\n"
+        "OBJECTIVE CHECKLIST (defined once):\n"
         "[x] 1. item one\n[ ] 2. item two\n\n"
-        "CHECKLIST DE ERROS ATUAIS (extraído automaticamente):\n"
+        "CURRENT ERROR CHECKLIST (automatically extracted):\n"
         "- 1. test foo failed\n\n"
-        "ERROS PROIBIDOS (você já cometeu estes erros):\n"
+        "FORBIDDEN ERRORS (you already made these mistakes):\n"
         "- ValueError: bad\n\n"
-        "HISTÓRICO DE AÇÕES (memória determinística):\n"
+        "ACTION HISTORY (deterministic memory):\n"
         "[1] (task, OK) write_file -> ok\n\n"
-        "COMANDOS CONHECIDOS QUE JÁ FUNCIONARAM (reutilize):\n"
-        "- Teste: ainda não descoberto\n- Build: ainda não descoberto\n\n"
-        "ARQUIVOS ATUAIS DO PROJETO (lista real do disco):\n"
+        "KNOWN WORKING COMMANDS (reuse):\n"
+        "- Test: not discovered yet\n- Build: not discovered yet\n\n"
+        "CURRENT PROJECT FILES (real on-disk list):\n"
         "- main.py\n- other.py\n\n"
-        "TASK PAI:\nTool: write_file\nArguments: x\n\nDEPENDÊNCIAS:\nNenhuma.\n\n"
-        "RESULTADO DA EXECUÇÃO:\nSTATUS: sucesso\n\n"
-        "ERRO DE VALIDAÇÃO ANTES DO FINISH:\nbloqueado"
+        "PARENT TASK:\nTool: write_file\nArguments: x\n\nDEPENDENCIES:\nNone.\n\n"
+        "EXECUTION RESULT:\nSTATUS: success\n\n"
+        "VALIDATION ERROR BEFORE FINISH:\nbloqueado"
     )
 
 
@@ -176,7 +176,7 @@ def test_breakdown_preserves_multiple_iterations(tools, parser):
     llm = LLMClient(provider)
     planner = Planner(llm=llm, parser=parser, tools=tools)
 
-    planner.plan(objective="obj1", context="RESUMO DO PROJETO:\nshort", iteration=1)
+    planner.plan(objective="obj1", context="PROJECT SUMMARY:\nshort", iteration=1)
     planner.plan(objective="obj2", context=_full_context(), iteration=2)
 
     history = llm.usage.get_planner_context_history()
@@ -274,7 +274,7 @@ def test_report_contains_avg_total_max_and_iterations(tools, parser):
     provider = _FakeProvider()
     llm = LLMClient(provider)
     planner = Planner(llm=llm, parser=parser, tools=tools)
-    planner.plan(objective="o", context="RESUMO DO PROJETO:\na", iteration=1)
+    planner.plan(objective="o", context="PROJECT SUMMARY:\na", iteration=1)
     planner.plan(objective="o", context=_full_context(), iteration=2)
 
     report = llm.usage.planner_context_breakdown()
@@ -293,18 +293,18 @@ def test_report_contains_avg_total_max_and_iterations(tools, parser):
 def test_error_blocks_capture_retry_markers(tools, parser):
     planner, _ = _make_planner_with_mock_llm(tools, parser)
     ctx = (
-        "RESUMO DO PROJETO:\ns\n\n"
-        "ARQUIVOS ATUAIS DO PROJETO (lista):\n- a.py\n\n"
-        "RESULTADO DA EXECUÇÃO:\nok\n\n"
-        "CORREÇÃO DA TENTATIVA ANTERIOR:\nValueError: bad\n\n"
+        "PROJECT SUMMARY:\ns\n\n"
+        "CURRENT PROJECT FILES (list):\n- a.py\n\n"
+        "EXECUTION RESULT:\nok\n\n"
+        "PREVIOUS ATTEMPT CORRECTION:\nValueError: bad\n\n"
         "Não execute ferramentas."
     )
     sections = planner.build_prompt_sections("o", ctx)
-    assert "CORREÇÃO DA TENTATIVA ANTERIOR" in sections["error_blocks"]
+    assert "PREVIOUS ATTEMPT CORRECTION" in sections["error_blocks"]
 
-    ctx2 = "RESUMO DO PROJETO:\ns\n\nERRO REPETIDO — LEIA COM ATENÇÃO:\nrepetiu"
+    ctx2 = "PROJECT SUMMARY:\ns\n\nREPEATED ERROR — READ CAREFULLY:\nrepetiu"
     sections2 = planner.build_prompt_sections("o", ctx2)
-    assert "ERRO REPETIDO" in sections2["error_blocks"]
+    assert "REPEATED ERROR" in sections2["error_blocks"]
 
 
 def test_unclassified_context_goes_to_other_context():

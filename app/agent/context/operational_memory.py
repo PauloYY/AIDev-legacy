@@ -183,38 +183,38 @@ class OperationalMemory:
             else self.render_files(project_name)
         )
         return (
-            "HISTÓRICO DE AÇÕES (memória determinística — Python puro, "
-            "sempre precisa, não depende da LLM lembrar):\n"
+            "ACTION HISTORY (deterministic memory — pure Python, "
+            "always accurate, does not depend on the LLM remembering):\n"
             f"{self.render_history()}\n\n"
             f"{self.render_known_commands()}\n\n"
-            "ARQUIVOS ATUAIS DO PROJETO (lista real do disco, consultada "
-            "agora, não é um resumo):\n"
+            "CURRENT PROJECT FILES (real on-disk list, queried now, "
+            "not a summary):\n"
             f"{files_section}"
         )
 
     def render_known_commands(self) -> str:
         test_line = (
-            f"- Teste: {self._known_test_command}"
+            f"- Test: {self._known_test_command}"
             if self._known_test_command
-            else "- Teste: ainda não descoberto"
+            else "- Test: not discovered yet"
         )
         build_line = (
             f"- Build: {self._known_build_command}"
             if self._known_build_command
-            else "- Build: ainda não descoberto"
+            else "- Build: not discovered yet"
         )
 
         return (
-            "COMANDOS CONHECIDOS QUE JÁ FUNCIONARAM (reutilize estes — "
-            "só tente um comando diferente se este parar de funcionar "
-            "depois de uma mudança de código):\n"
+            "KNOWN WORKING COMMANDS (reuse these — "
+            "only try a different command if one stops working "
+            "after a code change):\n"
             f"{test_line}\n"
             f"{build_line}"
         )
 
     def render_history(self) -> str:
         if not self._actions:
-            return "Nenhuma ação executada ainda nesta run."
+            return "No actions executed yet in this run."
         return "\n".join(self._format_action(a) for a in self._actions)
 
     # ---------- Etapa 5: janela de histórico com preservação ----------
@@ -246,7 +246,7 @@ class OperationalMemory:
         explícita com a contagem — nunca omite silenciosamente.
         """
         if not self._actions:
-            return "Nenhuma ação executada ainda nesta run."
+            return "No actions executed yet in this run."
 
         actions = list(self._actions)
         window = actions[-self.MAX_HISTORY_RENDERED_COMPACT:]
@@ -271,12 +271,12 @@ class OperationalMemory:
                     break
             omitted = len(older) - len(kept)
             lines.append(
-                f"... [{omitted} ação(ões) anterior(es) omitida(s): "
-                f"sucessos já refletidos no estado atual]"
+                f"... [{omitted} earlier action(s) omitted: "
+                f"successes already reflected in the current state]"
             )
             for action in kept:
                 lines.append(
-                    f"(falha anterior preservada) "
+                    f"(earlier failure preserved) "
                     f"{self._format_action(action)}"
                 )
 
@@ -298,12 +298,12 @@ class OperationalMemory:
             else self.render_files(project_name)
         )
         return (
-            "HISTÓRICO DE AÇÕES (memória determinística — Python puro, "
-            "sempre precisa, não depende da LLM lembrar):\n"
+            "ACTION HISTORY (deterministic memory — pure Python, "
+            "always accurate, does not depend on the LLM remembering):\n"
             f"{self.render_history_compact()}\n\n"
             f"{self.render_known_commands()}\n\n"
-            "ARQUIVOS ATUAIS DO PROJETO (lista real do disco, consultada "
-            "agora, não é um resumo):\n"
+            "CURRENT PROJECT FILES (real on-disk list, queried now, "
+            "not a summary):\n"
             f"{files_section}"
         )
 
@@ -311,9 +311,9 @@ class OperationalMemory:
         try:
             files = self.tools.execute("list_files", {"project_name": project_name})
         except Exception as error:
-            return f"Não foi possível listar os arquivos: {error}"
+            return f"Could not list files: {error}"
         if not files:
-            return "(projeto vazio)"
+            return "(empty project)"
         return self._format_listing(sorted(files))
 
     def render_files_state(
@@ -338,17 +338,17 @@ class OperationalMemory:
                 "list_files", {"project_name": project_name})
         except Exception as error:
             return (
-                f"Não foi possível listar os arquivos: {error}", None)
+                f"Could not list files: {error}", None)
         file_list = sorted(files) if files else []
         state = sha1(repr(file_list).encode("utf-8")).hexdigest()
         if last_state is not None and state == last_state:
             return (
-                f"(sem alterações desde a última verificação — "
-                f"{len(file_list)} arquivo(s))",
+                f"(no changes since last check — "
+                f"{len(file_list)} file(s))",
                 state,
             )
         if not file_list:
-            return "(projeto vazio)", state
+            return "(empty project)", state
         return self._format_listing(file_list), state
 
     def _format_listing(self, files: list) -> str:
@@ -359,11 +359,11 @@ class OperationalMemory:
             files = files[: self.MAX_FILES_LISTED]
         listing = "\n".join(f"- {p}" for p in files)
         if omitted:
-            listing += f"\n... [+{omitted} arquivos omitidos]"
+            listing += f"\n... [+{omitted} files omitted]"
         return listing
 
     def _format_action(self, action: ActionRecord) -> str:
-        status = "OK" if action.success else "FALHOU"
+        status = "OK" if action.success else "FAILED"
         kind = "dependency" if action.dependency else "task"
         args_repr = self._format_arguments_for_history(
             action.tool, action.arguments

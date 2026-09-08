@@ -42,40 +42,39 @@ class ProjectAnalyzer:
         )
 
         return f"""
-Você é o analisador de projetos de um agente de desenvolvimento.
+You are the project analyzer of a development agent.
 
-Analise a estrutura do projeto abaixo e produza um resumo inicial
-que será utilizado posteriormente por outro agente para planejar
-tarefas.
+Analyze the project structure below and produce an initial summary
+to be used later by another agent to plan tasks.
 
-PROJETO:
+PROJECT:
 {project_name}
 
-ARQUIVOS:
+FILES:
 {files_json}
 
-REGRAS:
-- Retorne somente o conteúdo do resumo.
-- Não use JSON.
-- Não invente informações sobre os arquivos.
-- Baseie-se somente na estrutura fornecida.
-- Indique que o conteúdo dos arquivos ainda não foi analisado.
-- Seja conciso.
-- O resultado será salvo diretamente em .aidev/summary.md.
+RULES:
+- Return only the summary content.
+- Do not use JSON.
+- Do not invent information about the files.
+- Base your answer only on the given structure.
+- State that the file contents have not been analyzed yet.
+- Be concise.
+- The result will be saved directly to .aidev/summary.md.
 
-O resumo deve conter:
+The summary must contain:
 
 # Project Summary
 
-## Estrutura
+## Structure
 
-Liste os arquivos relevantes.
+List the relevant files.
 
-## Entendimento
+## Understanding
 
-Descreva somente o que pode ser inferido pela estrutura.
+Describe only what can be inferred from the structure.
 
-## Observações
+## Notes
 
-Informe que os arquivos ainda precisam ser analisados quando necessário.
+State that the files still need to be analyzed when necessary.
 """

@@ -61,20 +61,21 @@ class TaskValidator:
             and not allow_investigation
         ):
             raise ValueError(
-                f"A tool '{tool_name}' só pode ser usada como "
-                "dependency, não como task principal. Ela serve para "
-                "reunir informação antes de uma ação real — anexe-a em "
-                '"dependencies" da task que realmente precisa dessa '
-                "informação (ex.: um write_file que edita o arquivo "
-                "lido), em vez de criar uma task só para investigar. "
-                "Exceção: logo após um run_command de teste/build que "
-                "falhou, você pode usá-la sozinha para investigar o "
-                "que quebrou. Outra exceção: se o seu objetivo for "
-                "analisar ou investigar um projeto existente (sem "
-                "criar ou modificar nada), marque a task com "
+                f"The tool '{tool_name}' can only be used as a "
+                "dependency, not as the main task. It gathers "
+                "information before a real action — attach it in "
+                '"dependencies" of the task that really needs that '
+                "information (e.g. a write_file that edits the file "
+                "you read), instead of creating a task just to "
+                "investigate. "
+                "Exception: right after a failed test/build run_command, "
+                "you may use it alone to investigate what broke. "
+                "Another exception: if your objective is to "
+                "analyze or investigate an existing project (without "
+                "creating or modifying anything), mark the task with "
                 '"investigation": true'
-                " — isso permite usar read_file/list_files/find_references "
-                "como ação principal de forma explícita."
+                " — this explicitly allows read_file/list_files/"
+                "find_references as the main action."
             )
 
         self.schema_validator.validate(tool, arguments)
@@ -87,8 +88,8 @@ class TaskValidator:
 
         if tool.type != ToolType.ANALYSIS:
             raise ValueError(
-                f"A tool '{dependency.tool}' "
-                "não pode ser usada como dependency."
+                f"The tool '{dependency.tool}' "
+                "cannot be used as a dependency."
             )
 
         self.schema_validator.validate(tool, dependency.arguments)

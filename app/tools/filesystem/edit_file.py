@@ -16,12 +16,12 @@ def edit_file(
     """
     if not isinstance(old_text, str) or old_text == "":
         raise ValueError(
-            "EDIT_ERROR: 'old_text' não pode ser vazio. "
-            "Forneça o trecho exato a ser substituído."
+            "EDIT_ERROR: 'old_text' cannot be empty. "
+            "Provide the exact snippet to replace."
         )
     if not isinstance(new_text, str):
         raise ValueError(
-            "EDIT_ERROR: 'new_text' deve ser uma string."
+            "EDIT_ERROR: 'new_text' must be a string."
         )
 
     projects_dir = get_projects_dir()
@@ -30,17 +30,17 @@ def edit_file(
 
     if not project_dir.is_relative_to(projects_dir):
         raise PermissionError(
-            "Acesso fora do diretório de projetos não permitido."
+            "Access outside the projects directory is not allowed."
         )
 
     if not target_file.is_relative_to(project_dir):
-        raise PermissionError("Acesso fora do projeto não permitido.")
+        raise PermissionError("Access outside the project is not allowed.")
 
     if not target_file.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
+        raise FileNotFoundError(f"File not found: {file_path}")
 
     if not target_file.is_file():
-        raise IsADirectoryError(f"O caminho não é um arquivo: {file_path}")
+        raise IsADirectoryError(f"Path is not a file: {file_path}")
 
     content = target_file.read_text(encoding="utf-8")
 
@@ -48,19 +48,19 @@ def edit_file(
 
     if occurrences == 0:
         raise ValueError(
-            "EDIT_ERROR: trecho não encontrado. "
-            f"Nenhuma ocorrência de 'old_text' em '{file_path}'. "
-            "Verifique o conteúdo atual do arquivo (read_file) e "
-            "forneça o trecho exato."
+            "EDIT_ERROR: snippet not found. "
+            f"No occurrence of 'old_text' in '{file_path}'. "
+            "Check the current file content (read_file) and "
+            "provide the exact snippet."
         )
 
     if occurrences > 1:
         raise ValueError(
-            f"EDIT_ERROR: múltiplas ocorrências ({occurrences}). "
-            f"O trecho aparece {occurrences} vezes em '{file_path}' — "
-            "a edição foi abortada para evitar alteração ambígua. "
-            "Forneça um trecho mais específico (com mais contexto) "
-            "que ocorra exatamente uma vez."
+            f"EDIT_ERROR: multiple occurrences ({occurrences}). "
+            f"The snippet appears {occurrences} times in '{file_path}' — "
+            "the edit was aborted to avoid an ambiguous change. "
+            "Provide a more specific snippet (with more context) "
+            "that occurs exactly once."
         )
 
     updated = content.replace(old_text, new_text, 1)
@@ -97,35 +97,35 @@ definition = {
     "function": {
         "name": "edit_file",
         "description": (
-            "Modifica pontualmente um arquivo existente (o arquivo "
-            "deve existir — para criar, use write_file). Substitui o "
-            "trecho exato 'old_text' por 'new_text'; a edição só é "
-            "aplicada se o trecho ocorrer exatamente uma vez "
-            "(não encontrado ou ambíguo retorna erro, sem modificar "
-            "nada). Indicado para mudanças localizadas; para uma "
-            "reescrita substancial, use write_file."
+            "Makes a localized edit to an existing file (the file "
+            "must exist — to create one, use write_file), without "
+            "rewriting the whole file. Replaces the exact 'old_text' "
+            "snippet with 'new_text'; the edit is only applied if the "
+            "snippet occurs exactly once (not found or ambiguous "
+            "returns an error, modifying nothing). For a substantial "
+            "rewrite, use write_file."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Nome do projeto.",
+                    "description": "Project name.",
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "Caminho do arquivo dentro do projeto.",
+                    "description": "Path of the file inside the project.",
                 },
                 "old_text": {
                     "type": "string",
                     "description": (
-                        "Trecho exato a ser localizado (deve ocorrer "
-                        "exatamente uma vez no arquivo)."
+                        "Exact snippet to locate (must occur "
+                        "exactly once in the file)."
                     ),
                 },
                 "new_text": {
                     "type": "string",
-                    "description": "Texto que substitui o trecho.",
+                    "description": "Text that replaces the snippet.",
                 },
             },
             "required": [

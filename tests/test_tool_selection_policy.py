@@ -59,16 +59,16 @@ def test_mutative_tools_outside_parallel_batches():
 
 def test_write_description_is_create_or_rebuild():
     desc = _registry().get("write_file").definition["function"]["description"]
-    assert "novo" in desc  # cria arquivo novo
-    assert "edit_file" in desc  # aponta a alternativa pontual
+    assert "new file" in desc  # creates new files
+    assert "edit_file" in desc  # points to the localized alternative
 
 
 def test_edit_description_requires_existing_localized_change():
     tool = _registry().get("edit_file")
     desc = tool.definition["function"]["description"]
-    assert "existente" in desc
-    assert "write_file" in desc  # criar => write_file; reescrita => write_file
-    assert "exatamente uma vez" in desc
+    assert "existing file" in desc
+    assert "write_file" in desc  # create => write_file; rewrite => write_file
+    assert "exactly once" in desc
     params = tool.definition["function"]["parameters"]
     assert params["required"] == [
         "project_name", "file_path", "old_text", "new_text"]
@@ -76,7 +76,7 @@ def test_edit_description_requires_existing_localized_change():
 
 def test_delete_description_is_remove_only():
     desc = _registry().get("delete_file").definition["function"]["description"]
-    assert "desnecessário" in desc
+    assert "unnecessary" in desc
     assert ".git" in desc
     params = _registry().get("delete_file").definition["function"][
         "parameters"]

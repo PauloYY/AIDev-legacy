@@ -576,9 +576,9 @@ def test_problems_and_corrections_from_test_cycle(tmp_path):
                 return super().execute(tool, arguments)
             self.n += 1
             if self.n == 1:
-                return ("STATUS: falha (exit code 1)\n"
+                return ("STATUS: failure (exit code 1)\n"
                         "FAILED test_x")
-            return "STATUS: sucesso (exit code 0)\n3 passed"
+            return "STATUS: success (exit code 0)\n3 passed"
 
     checklist = ErrorChecklist(_StubLLM())
     fail = _task("run_command", {"project_name": "p",

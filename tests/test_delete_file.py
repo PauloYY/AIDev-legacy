@@ -36,7 +36,7 @@ def test_delete_keeps_sibling_files(projects_root):
 def test_delete_protects_git_paths(projects_root):
     write_file("proj", ".git/objects/x", "data")
 
-    with pytest.raises(PermissionError, match="protegido"):
+    with pytest.raises(PermissionError, match="protected"):
         delete_file("proj", ".git/objects/x")
 
     assert (projects_root / "proj" / ".git" / "objects" / "x").exists()
@@ -45,7 +45,7 @@ def test_delete_protects_git_paths(projects_root):
 def test_delete_protects_aidev_state(projects_root):
     write_file("proj", ".aidev/task_state.json", "{}")
 
-    with pytest.raises(PermissionError, match="protegido"):
+    with pytest.raises(PermissionError, match="protected"):
         delete_file("proj", ".aidev/task_state.json")
 
 

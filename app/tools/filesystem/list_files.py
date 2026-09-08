@@ -27,17 +27,17 @@ def list_files(project_name: str) -> list[str]:
 
     if not project_path.is_relative_to(projects_dir):
         raise PermissionError(
-            "Acesso fora do diretório de projetos não permitido."
+            "Access outside the projects directory is not allowed."
         )
 
     if not project_path.exists():
         raise FileNotFoundError(
-            f"Projeto não encontrado: {project_name}"
+            f"Project not found: {project_name}"
         )
 
     if not project_path.is_dir():
         raise NotADirectoryError(
-            f"O projeto não é um diretório: {project_name}"
+            f"Project is not a directory: {project_name}"
         )
 
     visible: list[str] = []
@@ -66,13 +66,13 @@ definition = {
     "type": "function",
     "function": {
         "name": "list_files",
-        "description": "Lista todos os arquivos de um projeto.",
+        "description": "Lists all files in a project.",
         "parameters": {
             "type": "object",
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Nome do projeto.",
+                    "description": "Project name.",
                 }
             },
             "required": ["project_name"],

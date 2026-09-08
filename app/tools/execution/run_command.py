@@ -104,16 +104,16 @@ def run_command(
 
     if not project_dir.is_relative_to(projects_dir):
         raise PermissionError(
-            "Acesso fora do diretório de projetos não permitido."
+            "Access outside the projects directory is not allowed."
         )
 
     if not project_dir.exists():
         raise FileNotFoundError(
-            f"Projeto não encontrado: {project_name}"
+            f"Project not found: {project_name}"
         )
 
     if not command or not command.strip():
-        raise ValueError("O comando não pode ser vazio.")
+        raise ValueError("Command cannot be empty.")
 
     timeout = timeout_seconds or Config.execution_timeout_seconds
 
@@ -136,12 +136,12 @@ def run_command(
 
     except subprocess.TimeoutExpired:
         return (
-            f"TIMEOUT: a execução excedeu {timeout}s e foi interrompida.\n"
-            "Possíveis causas: loop infinito, o processo esperou uma "
-            "entrada que não foi fornecida via 'stdin', ou o comando "
-            "inicia um processo que não termina sozinho (ex.: 'npm "
-            "start' ou um servidor web ficam rodando indefinidamente — "
-            "prefira comandos que terminam, como 'npm test' ou 'npm "
+            f"TIMEOUT: execution exceeded {timeout}s and was interrupted.\n"
+            "Possible causes: infinite loop, the process waited for an "
+            "input that was not provided via 'stdin', or the command "
+            "starts a process that never terminates on its own (e.g. "
+            "'npm start' or a web server keep running indefinitely — "
+            "prefer commands that terminate, such as 'npm test' or 'npm "
             "run build')."
         )
 
@@ -149,12 +149,12 @@ def run_command(
 
 
 def _format_result(result: subprocess.CompletedProcess) -> str:
-    status = "sucesso" if result.returncode == 0 else "falha"
+    status = "success" if result.returncode == 0 else "failure"
 
     return (
         f"STATUS: {status} (exit code {result.returncode})\n\n"
-        f"STDOUT:\n{result.stdout.strip() or '(vazio)'}\n\n"
-        f"STDERR:\n{result.stderr.strip() or '(vazio)'}"
+        f"STDOUT:\n{result.stdout.strip() or '(empty)'}\n\n"
+        f"STDERR:\n{result.stderr.strip() or '(empty)'}"
     )
 
 
@@ -163,49 +163,48 @@ definition = {
     "function": {
         "name": "run_command",
         "description": (
-            "Executa um comando de shell dentro da pasta do projeto, "
-            "para validar código em QUALQUER linguagem ou framework "
-            "disponível na imagem de sandbox (ex.: 'python main.py', "
+            "Runs a shell command inside the project folder, to "
+            "validate code in ANY language or framework available in "
+            "the sandbox image (e.g. 'python main.py', "
             "'python -m pytest -q', 'npm test', 'npm run build', "
             "'node app.js', 'gcc main.c -o main && ./main', "
             "'g++ main.cpp -o main && ./main', "
             "'javac Main.java && java Main', 'go run .', "
             "'go test ./...', 'cargo run', 'cargo test', "
-            "'ruby main.rb', 'php main.php'). Use esta tool para "
-            "VALIDAR que o código realmente funciona antes de "
-            "considerar uma task ou o objetivo concluído — não assuma "
-            "que está correto apenas por tê-lo escrito. Evite comandos "
-            "que não terminam sozinhos (servidores como 'npm start', "
-            "'flask run') — eles vão estourar o timeout. Para "
-            "programas interativos, use 'stdin' para simular entradas "
-            "do usuário."
+            "'ruby main.rb', 'php main.php'). Use this tool to VERIFY "
+            "that the code actually works before considering a task "
+            "or the objective done — do not assume it is correct just "
+            "because you wrote it. Avoid commands that never terminate "
+            "on their own (servers like 'npm start', 'flask run') — "
+            "they will hit the timeout. For interactive programs, use "
+            "'stdin' to simulate user inputs."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Nome do projeto.",
+                    "description": "Project name.",
                 },
                 "command": {
                     "type": "string",
                     "description": (
-                        "Comando de shell a executar dentro da pasta do "
-                        "projeto (ex.: 'npm test', 'python main.py')."
+                        "Shell command to run inside the project folder "
+                        "(e.g. 'npm test', 'python main.py')."
                     ),
                 },
                 "stdin": {
                     "type": "string",
                     "description": (
-                        "Entradas simuladas de usuário, separadas por "
-                        "quebra de linha (opcional)."
+                        "Simulated user inputs, separated by newlines "
+                        "(optional)."
                     ),
                 },
                 "timeout_seconds": {
                     "type": "integer",
                     "description": (
-                        "Tempo máximo de execução em segundos (opcional, "
-                        f"padrão: {Config.execution_timeout_seconds})."
+                        "Maximum execution time in seconds (optional, "
+                        f"default: {Config.execution_timeout_seconds})."
                     ),
                 },
             },

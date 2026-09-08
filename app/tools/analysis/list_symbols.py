@@ -11,7 +11,7 @@ def _list_python_symbols(content: str) -> list[str]:
     try:
         tree = ast.parse(content)
     except SyntaxError as error:
-        return [f"(erro de sintaxe ao analisar o arquivo: {error})"]
+        return [f"(syntax error while parsing the file: {error})"]
 
     all_names = None
 
@@ -174,7 +174,7 @@ def _list_go_symbols(content: str) -> list[str]:
         for match in pattern.finditer(content):
             name = match.group(1)
             visibility = (
-                "exportado" if name[:1].isupper() else "não-exportado"
+                "exported" if name[:1].isupper() else "not exported"
             )
             symbols.append(f"{name}  ({kind}, {visibility})")
 
@@ -225,12 +225,12 @@ def _list_generic_symbols(content: str) -> list[str]:
 
 
 _EXTENSION_HANDLERS = {
-    ".py": ("Python — AST, preciso", _list_python_symbols),
-    ".js": ("JavaScript — heurística por regex", _list_js_symbols),
-    ".jsx": ("JavaScript/JSX — heurística por regex", _list_js_symbols),
-    ".ts": ("TypeScript — heurística por regex", _list_js_symbols),
-    ".tsx": ("TypeScript/TSX — heurística por regex", _list_js_symbols),
-    ".go": ("Go — heurística por regex", _list_go_symbols),
+    ".py": ("Python — AST, precise", _list_python_symbols),
+    ".js": ("JavaScript — regex heuristic", _list_js_symbols),
+    ".jsx": ("JavaScript/JSX — regex heuristic", _list_js_symbols),
+    ".ts": ("TypeScript — regex heuristic", _list_js_symbols),
+    ".tsx": ("TypeScript/TSX — regex heuristic", _list_js_symbols),
+    ".go": ("Go — regex heuristic", _list_go_symbols),
 }
 
 
@@ -250,52 +250,52 @@ def list_symbols(project_name: str, file_path: str) -> str:
 
     if not project_path.is_relative_to(projects_dir):
         raise PermissionError(
-            "Acesso fora do diretório de projetos não permitido."
+            "Access outside the projects directory is not allowed."
         )
 
     if not project_path.exists():
         raise FileNotFoundError(
-            f"Projeto não encontrado: {project_name}"
+            f"Project not found: {project_name}"
         )
 
     target = (project_path / file_path).resolve()
 
     if not target.is_relative_to(project_path):
         raise PermissionError(
-            "Acesso fora do diretório do projeto não permitido."
+            "Access outside the project directory is not allowed."
         )
 
     if not target.exists():
-        raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
+        raise FileNotFoundError(f"File not found: {file_path}")
 
     if not target.is_file():
-        raise IsADirectoryError(f"Não é um arquivo: {file_path}")
+        raise IsADirectoryError(f"Path is not a file: {file_path}")
 
     try:
         content = target.read_text(encoding="utf-8")
     except UnicodeDecodeError as error:
         raise ValueError(
-            f"Não foi possível ler '{file_path}' como texto "
-            f"(arquivo binário?): {error}"
+            f"Could not read '{file_path}' as text "
+            f"(binary file?): {error}"
         )
 
     suffix = target.suffix.lower()
     label, handler = _EXTENSION_HANDLERS.get(
-        suffix, ("heurística genérica por regex", _list_generic_symbols)
+        suffix, ("generic regex heuristic", _list_generic_symbols)
     )
 
     symbols = handler(content)
 
     if not symbols:
         return (
-            f"Nenhum símbolo exportado/definido foi detectado em "
-            f"'{file_path}' ({label}). O arquivo pode estar vazio, "
-            "não exportar nada publicamente, ou usar um padrão que "
-            "esta análise heurística não reconhece — nesse caso, use "
-            "read_file para conferir manualmente."
+            f"No exported/defined symbols detected in "
+            f"'{file_path}' ({label}). The file may be empty, "
+            "not export anything publicly, or use a pattern that "
+            "this heuristic analysis does not recognize — in that "
+            "case, use read_file to check manually."
         )
 
-    lines = [f"Símbolos em '{file_path}' ({label}):"]
+    lines = [f"Symbols in '{file_path}' ({label}):"]
     lines += [f"- {symbol}" for symbol in symbols]
 
     return "\n".join(lines)
@@ -306,31 +306,29 @@ definition = {
     "function": {
         "name": "list_symbols",
         "description": (
-            "Lista os símbolos (funções, classes, exports) que um "
-            "arquivo REALMENTE define/exporta — via AST em Python "
-            "(preciso) ou heurística por regex nas demais linguagens "
-            "(Go, JS/TS, e um fallback genérico para Java/Ruby/PHP/"
-            "Rust/C/C++). Use esta tool ANTES de escrever um import/"
-            "require que referencia outro arquivo do projeto, para "
-            "confirmar o nome exato do arquivo e dos símbolos "
-            "exportados em vez de adivinhar — evita erros de import "
-            "por nome errado (ex.: 'ProfessionalRepository' vs "
-            "'professional.repository') que só apareceriam depois, "
-            "no check_project ou em tempo de execução."
+            "Lists the symbols (functions, classes, exports) that a "
+            "file REALLY defines/exports — via AST in Python (precise) "
+            "or regex heuristics in other languages (Go, JS/TS, and a "
+            "generic fallback for Java/Ruby/PHP/Rust/C/C++). Use this "
+            "tool BEFORE writing an import/require that references "
+            "another project file, to confirm the exact file name and "
+            "exported symbols instead of guessing — avoids import "
+            "errors from wrong names (e.g. 'ProfessionalRepository' vs "
+            "'professional.repository') that would only show up later, "
+            "in check_project or at runtime."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Nome do projeto.",
+                    "description": "Project name.",
                 },
                 "file_path": {
                     "type": "string",
                     "description": (
-                        "Caminho do arquivo, relativo à raiz do "
-                        "projeto, cujos símbolos exportados devem "
-                        "ser listados."
+                        "Path of the file, relative to the project "
+                        "root, whose exported symbols should be listed."
                     ),
                 },
             },

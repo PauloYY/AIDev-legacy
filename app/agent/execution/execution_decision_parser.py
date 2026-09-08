@@ -14,12 +14,12 @@ class ExecutionDecisionParser:
             data = parse_json_object(content)
         except json.JSONDecodeError as exc:
             raise ValueError(
-                "A LLM retornou JSON inválido."
+                "The LLM returned invalid JSON."
             ) from exc
 
         if not isinstance(data, dict):
             raise ValueError(
-                "A decisão deve ser um objeto JSON."
+                "The decision must be a JSON object."
             )
 
         tool = data.get("tool")
@@ -27,12 +27,12 @@ class ExecutionDecisionParser:
 
         if not isinstance(tool, str):
             raise ValueError(
-                "A decisão deve conter uma tool válida."
+                "The decision must contain a valid tool."
             )
 
         if not isinstance(arguments, dict):
             raise ValueError(
-                "A decisão deve conter arguments como objeto."
+                "The decision must contain arguments as an object."
             )
 
         return ExecutionDecision(

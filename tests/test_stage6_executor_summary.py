@@ -120,14 +120,14 @@ def _runner(decisions, executions, trace, **overrides):
 
 # Restrições normativas do Executor que nunca podem sumir.
 EXECUTOR_CONSTRAINTS = [
-    "SOMENTE JSON",
-    "NÃO execute ferramentas",
+    "ONLY valid JSON",
+    "Do NOT execute tools",
     "tool calls",
-    "exclusivamente a tool indicada",
-    "não crie tasks",
+    "exclusively the indicated tool",
+    "do not create tasks",
     "dependencies",
-    "finalidade",
-    "conteúdo completo do arquivo",
+    "purpose",
+    "full file content",
 ]
 
 
@@ -167,7 +167,7 @@ def test_compact_executor_preserves_dependencies():
                                 "file_path": "a.py", "content": "x"})
     prompt = TaskDecisionMaker._build_prompt_compact("obj", task, context)
     assert dep_result in prompt
-    assert "CONTEXTO DAS DEPENDÊNCIAS" in prompt
+    assert "DEPENDENCY CONTEXT" in prompt
 
 
 def test_compact_executor_preserves_constraints():
@@ -203,12 +203,12 @@ def test_dependency_results_capped_safely(monkeypatch):
                                 "file_path": "a.py"})
     task = _task("write_file", {"project_name": "p"},
                  dependencies=[dep])
-    big = "STATUS: sucesso (exit code 0)\n" + "y" * 6000
+    big = "STATUS: success (exit code 0)\n" + "y" * 6000
 
     monkeypatch.setattr(Config, "compact_executor", True)
     out = TaskContextBuilder(max_result_chars=4000).build(task, [big])
-    assert "STATUS: sucesso (exit code 0)" in out
-    assert "resultado truncado" in out
+    assert "STATUS: success (exit code 0)" in out
+    assert "truncated result" in out
     assert len(out) < 3000
 
     monkeypatch.setattr(Config, "compact_executor", False)
@@ -240,12 +240,12 @@ def test_updater_receives_enough_context():
         objective="meu objetivo",
         current_summary="resumo vigente aqui",
         task=task,
-        result="STATUS: sucesso (exit code 0)\nfeito",
+        result="STATUS: success (exit code 0)\nfeito",
     )
     assert "meu objetivo" in prompt
     assert "resumo vigente aqui" in prompt
     assert "a.py" in prompt
-    assert "STATUS: sucesso (exit code 0)" in prompt
+    assert "STATUS: success (exit code 0)" in prompt
     # Conteúdo gigante não vai integral (política da Etapa 2D).
     assert "x" * 5000 not in prompt
 
@@ -319,7 +319,7 @@ def test_updater_still_called_for_state_changes(
 def test_errors_tests_exit_codes_available(monkeypatch):
     """Casos 9-11: veredito integral no contexto do Executor."""
     monkeypatch.setattr(Config, "compact_executor", True)
-    result = ("STATUS: falha (exit code 1)\n"
+    result = ("STATUS: failure (exit code 1)\n"
               "FAILED test_cart.py::test_total - assert 10 == 12\n"
               "test_cart.py:42 AssertionError")
     dep = Dependency(tool="run_command",
@@ -329,7 +329,7 @@ def test_errors_tests_exit_codes_available(monkeypatch):
                                 "file_path": "cart.py", "content": "fix"},
                  dependencies=[dep])
     out = TaskContextBuilder(max_result_chars=4000).build(task, [result])
-    assert "STATUS: falha (exit code 1)" in out
+    assert "STATUS: failure (exit code 1)" in out
     assert "FAILED test_cart.py::test_total" in out
     assert "test_cart.py:42" in out
 
@@ -355,7 +355,7 @@ def test_duplicated_info_is_reduced():
     compact = TaskDecisionMaker._build_prompt_compact("obj", task, context)
     assert len(compact) < len(legacy)
     for keeper in ("write_file", "a.py", "conteudo", "obj",
-                   "SOMENTE JSON"):
+                   "ONLY valid JSON"):
         assert keeper in compact
 
 
@@ -363,16 +363,16 @@ def test_big_outputs_compacted_with_marker(monkeypatch):
     """Caso 13: outputs grandes com marcador; pequenos intactos."""
     monkeypatch.setattr(Config, "compact_executor", True)
     builder = TaskContextBuilder(max_result_chars=4000)
-    small = "STATUS: sucesso (exit code 0)\nok"
+    small = "STATUS: success (exit code 0)\nok"
     task = _task("write_file", {"project_name": "p"})
     assert builder._format_result(small) == small
 
-    big = "STATUS: sucesso (exit code 0)\n" + "z" * 10000
+    big = "STATUS: success (exit code 0)\n" + "z" * 10000
     out = builder._format_result(big)
     assert out.startswith(
-        f"[resultado truncado: {len(big)} chars no total]")
-    assert "STATUS: sucesso (exit code 0)" in out
-    assert "chars omitidos" in out
+        f"[truncated result: {len(big)} chars in total]")
+    assert "STATUS: success (exit code 0)" in out
+    assert "chars omitted" in out
     assert len(out) < 2500
 
 
@@ -593,45 +593,47 @@ def test_disabling_compact_executor_restores_legacy(monkeypatch):
 
 
 def test_legacy_executor_prompt_is_byte_identical():
-    """Garantia: _build_prompt reproduz o template anterior à Etapa 6.
+    """Garantia: _build_prompt reproduz o template em inglês.
 
     Template congelado inline (a versão via `git show HEAD` quebrou
     quando o refactor foi commitado — o intent é o template, não o
-    VCS).
+    VCS). Atualizado na padronização linguística: o protocolo do
+    Executor agora é inglês, e o teste continua garantindo que o
+    template é determinístico byte a byte.
     """
     task = _task("write_file", {"a": 1})
     objective, context = "OBJ", "CTX"
     expected = """
-Você é o executor de uma tarefa de desenvolvimento.
+You are the executor of a software development task.
 
-Sua função é decidir como executar a task fornecida,
-utilizando as informações disponíveis no contexto.
+Your role is to decide how to execute the given task,
+using the information available in the context.
 
-OBJETIVO:
+OBJECTIVE:
 OBJ
 
 TASK:
 Tool: write_file
 
-ARGUMENTOS:
+ARGUMENTS:
 {'a': 1}
 
-CONTEXTO DAS DEPENDÊNCIAS:
+DEPENDENCY CONTEXT:
 CTX
 
-REGRAS:
-- Retorne SOMENTE JSON válido.
-- NÃO execute ferramentas.
-- NÃO produza tool calls.
-- Use exclusivamente a tool indicada na task.
-- Não crie novas tasks.
-- Não crie dependencies.
-- Não altere a finalidade da task.
-- Os argumentos devem ser válidos para a tool.
-- Para write_file, forneça o conteúdo completo do arquivo.
-- Para read_file, mantenha os argumentos necessários para leitura.
+RULES:
+- Return ONLY valid JSON.
+- Do NOT execute tools.
+- Do NOT produce tool calls.
+- Use exclusively the tool indicated in the task.
+- Do not create new tasks.
+- Do not create dependencies.
+- Do not change the purpose of the task.
+- Arguments must be valid for the tool.
+- For write_file, provide the full file content.
+- For read_file, keep the arguments needed for reading.
 
-FORMATO:
+FORMAT:
 {
     "tool": "write_file",
     "arguments": {
@@ -639,7 +641,7 @@ FORMATO:
     }
 }
 
-Retorne SOMENTE o JSON.
+Return ONLY the JSON.
 """
     assert (TaskDecisionMaker._build_prompt(objective, task, context)
             == expected)

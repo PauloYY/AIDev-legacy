@@ -13,12 +13,12 @@ def write_file(project_name: str, file_path: str, content: str) -> str:
         project_path = project_path.resolve()
     except FileNotFoundError:
         raise FileNotFoundError(
-            f"Projeto não encontrado: {project_name}"
+            f"Project not found: {project_name}"
         )
 
     if not target_path.is_relative_to(project_path):
         raise PermissionError(
-            "Acesso fora do diretório do projeto não permitido."
+            "Access outside the project directory is not allowed."
         )
 
     is_new_file = not target_path.exists()
@@ -36,7 +36,7 @@ def write_file(project_name: str, file_path: str, content: str) -> str:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(content, encoding="utf-8")
 
-    return f"Arquivo escrito com sucesso: {file_path}"
+    return f"File written successfully: {file_path}"
 
 
 definition = {
@@ -44,24 +44,24 @@ definition = {
     "function": {
         "name": "write_file",
         "description": (
-            "Cria um arquivo novo ou reconstrói o conteúdo de um "
-            "arquivo existente. Para mudanças pequenas e localizadas "
-            "num arquivo existente, prefira edit_file."
+            "Creates a new file or rebuilds the content of an "
+            "existing file. For small, localized changes to an "
+            "existing file, prefer edit_file."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Nome do projeto.",
+                    "description": "Project name.",
                 },
                 "file_path": {
                     "type": "string",
-                    "description": "Caminho do arquivo dentro do projeto.",
+                    "description": "Path of the file inside the project.",
                 },
                 "content": {
                     "type": "string",
-                    "description": "Conteúdo completo do arquivo.",
+                    "description": "Full content of the file.",
                 },
             },
             "required": [

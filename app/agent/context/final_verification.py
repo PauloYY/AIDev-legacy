@@ -120,8 +120,8 @@ class FinalVerification:
             return FinalVerificationResult(FinalVerificationResult.OK)
 
         report_lines = [
-            "VERIFICAÇÃO FINAL DO PROJETO:",
-            "Problemas encontrados que precisam ser corrigidos antes de finalizar:",
+            "FINAL PROJECT VERIFICATION:",
+            "Problems found that must be fixed before finishing:",
         ]
 
         for i, problem in enumerate(cleaned, start=1):
@@ -130,8 +130,8 @@ class FinalVerification:
         if not passed and not cleaned:
             report_lines.insert(
                 2,
-                "(A LLM avaliou que o objetivo não foi plenamente atingido, "
-                "mas não especificou problemas detalhados.)",
+                "(The LLM judged that the objective was not fully met, "
+                "but did not specify detailed problems.)",
             )
 
         return FinalVerificationResult(
@@ -255,7 +255,7 @@ class FinalVerification:
                 if len(truncated) > self.MAX_CONTEXT_CHARS:
                     truncated = (
                         f"{truncated[:self.MAX_CONTEXT_CHARS]}\n"
-                        f"...[truncado, {len(str(content_result)) - self.MAX_CONTEXT_CHARS} caracteres omitidos]"
+                        f"...[truncated, {len(str(content_result)) - self.MAX_CONTEXT_CHARS} characters omitted]"
                     )
                 content = truncated
         except Exception:
@@ -313,7 +313,7 @@ class FinalVerification:
                 parts.append(f"--- {path} ---\n{content}")
             files_section = "\n\n".join(parts)
         else:
-            files_section = "(nenhum arquivo encontrado)"
+            files_section = "(no files found)"
 
         symbols_section = ""
         if project_info.get("symbols"):
@@ -322,52 +322,52 @@ class FinalVerification:
                 parts.append(f"## {path}:\n" + "\n".join(f"- {s}" for s in syms))
             symbols_section = "\n\n".join(parts)
         else:
-            symbols_section = "(nenhum símbolo detectado)"
+            symbols_section = "(no symbols detected)"
 
         return f"""
-Você é um revisor de qualidade de software responsável por fazer uma
-verificação final em um projeto de desenvolvimento autônomo.
+You are a software quality reviewer in charge of the final
+verification of an autonomous software development project.
 
-OBJETIVO DO PROJETO:
+PROJECT OBJECTIVE:
 {objective}
 
-RESUMO DO PROJETO (gerado durante o desenvolvimento):
+PROJECT SUMMARY (generated during development):
 {summary}
 
-ARQUIVOS DO PROJETO ({project_info.get('files_shown', 0)} mostrados,
-{project_info.get('files_omitted', 0)} omitidos por limite):
+PROJECT FILES ({project_info.get('files_shown', 0)} shown,
+{project_info.get('files_omitted', 0)} omitted due to limit):
 {chr(10).join(f'- {f}' for f in project_info.get('files', []))}
 
-CONTEÚDOS DOS ARQUIVOS:
+FILE CONTENTS:
 {files_section}
 
-SÍMBOLOS EXPORTADOS/DEFINIDOS (Python — AST):
+EXPORTED/DEFINED SYMBOLS (Python — AST):
 {symbols_section}
 
-SUA TAREFA:
-Analise se o projeto ATUAL atende ao OBJETIVO acima. Procure por:
+YOUR TASK:
+Analyze whether the CURRENT project meets the OBJECTIVE above. Look for:
 
-1. OBRIGATORIEDADES DO OBJETIVO: cada requisito do objetivo está
-   implementado? Funções/classes/funcionalidades mencionadas existem?
-2. INTEGRACAO: imports e referências cruzadas fazem sentido? Um
-   arquivo referencia algo que não existe? Símbolos importados foram
-   realmente definidos nos arquivos de origem?
-3. LÓGICA: há lógica claramente incorreta (condições invertidas,
-   valores errados, fluxos que nunca executam)?
-4. CONSISTENCIA: nomes, tipos e interfaces são consistentes entre
-   arquivos?
+1. OBJECTIVE REQUIREMENTS: is each requirement implemented?
+   Do the mentioned functions/classes/features exist?
+2. INTEGRATION: do imports and cross-references make sense? Does a
+   file reference something that does not exist? Were imported
+   symbols actually defined in the source files?
+3. LOGIC: is there clearly incorrect logic (inverted conditions,
+   wrong values, flows that never run)?
+4. CONSISTENCY: are names, types and interfaces consistent across
+   files?
 
-O resumo do projeto pode estar desatualizado — confie nos conteúdos
-dos arquivos reais acima, não no resumo, quando houver conflito.
+The project summary may be outdated — trust the real file contents
+above, not the summary, when they conflict.
 
-Retorne SOMENTE um JSON no formato:
-{{"passed": true/false, "problems": ["problema 1", "problema 2", ...]}}
+Return ONLY JSON in the format:
+{{"passed": true/false, "problems": ["problem 1", "problem 2", ...]}}
 
-Se passed=true, problems deve ser uma lista vazia [].
-Se passed=false, problems deve conter cada problema encontrado como
-string descritiva e específica (ex.: "auth.py importa 'UserService'
-que não é exportado em users.py — list_symbols mostra apenas 'UserModel').
+If passed=true, problems must be an empty list [].
+If passed=false, problems must contain each problem found as a
+descriptive, specific string (e.g. "auth.py imports 'UserService'
+which is not exported in users.py — list_symbols shows only 'UserModel'").
 
-    Se o objetivo for simples e o projeto parecer completo e correto,
-    retorne {{"passed": true, "problems": []}}.
+    If the objective is simple and the project looks complete and correct,
+    return {{"passed": true, "problems": []}}.
 """

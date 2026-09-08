@@ -64,36 +64,36 @@ class ErrorChecklist:
             omitted = len(truncated) - self.MAX_INPUT_CHARS
             truncated = (
                 f"{truncated[:self.MAX_INPUT_CHARS]}\n"
-                f"...[truncado, {omitted} caracteres omitidos]"
+                f"...[truncated, {omitted} characters omitted]"
             )
 
         prompt = f"""
-Você é responsável por extrair, da saída bruta de um comando de
-teste/build que falhou, uma lista objetiva das falhas reais.
+You are responsible for extracting, from the raw output of a failed
+test/build command, an objective list of the real failures.
 
-COMANDO EXECUTADO:
+EXECUTED COMMAND:
 {command}
 
-SAÍDA DO COMANDO:
+COMMAND OUTPUT:
 {truncated}
 
-REGRAS:
-- Retorne SOMENTE um JSON no formato:
-  {{"items": ["descrição da falha 1", "descrição da falha 2", ...]}}
-- Cada item deve descrever UMA falha concreta e específica: o
-  teste/arquivo envolvido, o que era esperado e o que aconteceu
-  (ex.: "RideService.test.js: 'deve falhar quando motorista estiver
-  ocupado' esperava toThrow('Motorista está ocupado'), mas a função
-  não lançou exceção").
-- Ignore testes que passaram. Ignore avisos que não são falhas.
-- Se a saída for de um erro de compilação/build (não testes),
-  extraia cada erro de compilação como um item separado.
-- Se não houver nenhuma falha real identificável no texto (ex.: a
-  saída não tem relação com teste/build, ou o motivo da falha é
-  só infraestrutura, tipo timeout do sandbox), retorne
+RULES:
+- Return ONLY JSON in the format:
+  {{"items": ["failure description 1", "failure description 2", ...]}}
+- Each item must describe ONE concrete, specific failure: the
+  test/file involved, what was expected and what happened
+  (e.g. "RideService.test.js: 'should throw when driver is busy'
+  expected toThrow('Driver is busy'), but the function did not
+  throw").
+- Ignore tests that passed. Ignore warnings that are not failures.
+- If the output is a compilation/build error (not tests),
+  extract each compilation error as a separate item.
+- If there is no identifiable real failure in the text (e.g. the
+  output is unrelated to tests/build, or the failure is purely
+  infrastructural, like a sandbox timeout), return
   {{"items": []}}.
-- Use no máximo {self.MAX_ITEMS} itens — se houver mais falhas que
-  isso, priorize as mais informativas/distintas.
+- Use at most {self.MAX_ITEMS} items — if there are more failures
+  than that, prioritize the most informative/distinct ones.
 """
 
         response = self.llm.generate(
@@ -187,8 +187,8 @@ REGRAS:
         """
 
         description = (
-            f"Comando '{command}' {reason}; rode-o novamente e "
-            "confirme que passa antes de finalizar."
+            f"Command '{command}' {reason}; re-run it and "
+            "confirm it passes before finishing."
         )
 
         if any(item.description == description for item in self._items):
@@ -210,10 +210,10 @@ REGRAS:
             return None
 
         lines = [
-            "CHECKLIST DE ERROS ATUAIS (extraído automaticamente da "
-            "última falha de teste/build; some sozinho quando os "
-            "testes voltarem a passar — não precisa marcar nada "
-            "manualmente, só corrigir e rodar o teste de novo):",
+            "CURRENT ERROR CHECKLIST (automatically extracted from the "
+            "last test/build failure; disappears on its own when tests "
+            "pass again — no need to mark anything manually, just fix "
+            "and re-run the test):",
         ]
 
         for item in self._items:

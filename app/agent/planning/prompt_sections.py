@@ -6,11 +6,11 @@ O Planner recebe `objective: str` e `context: str` já concatenados pelo
 Runner. Este módulo recupera os componentes individuais a partir das
 marcações estáveis produzidas por:
 
-- Runner._build_memory_block (RESUMO, CHECKLIST, ERROS PROIBIDOS, etc.)
-- OperationalMemory.render (HISTÓRICO, COMANDOS CONHECIDOS, ARQUIVOS)
-- TaskContextBuilder.build (TASK PAI:)
-- Runner pós-execução (RESULTADO DA EXECUÇÃO:)
-- Blocos de erro do Runner + retry do Planner (ERRO.../CORREÇÃO...)
+- Runner._build_memory_block (SUMMARY, CHECKLIST, FORBIDDEN ERRORS, etc.)
+- OperationalMemory.render (HISTORY, KNOWN COMMANDS, FILES)
+- TaskContextBuilder.build (PARENT TASK:)
+- Runner pós-execução (EXECUTION RESULT:)
+- Blocos de erro do Runner + retry do Planner (ERROR.../CORRECTION...)
 
 Se o formato do contexto mudar no futuro, as seções ausentes retornam ""
 e o resíduo vai para `other_context` — nunca levanta exceção.
@@ -37,27 +37,27 @@ DYNAMIC_COMPONENTS = [
 PLANNER_COMPONENTS = ["static_template", "objective"] + DYNAMIC_COMPONENTS
 
 # Marcadores estáveis (prefixos) usados para fatiar o contexto.
-PROJECT_SUMMARY_MARKER = "RESUMO DO PROJETO:"
-OBJECTIVE_CHECKLIST_MARKER = "CHECKLIST DO OBJETIVO"
-ERROR_CHECKLIST_MARKER = "CHECKLIST DE ERROS ATUAIS"
-PLANNER_ERROR_MEMORY_MARKER = "ERROS PROIBIDOS"
-ACTION_HISTORY_MARKER = "HISTÓRICO DE AÇÕES"
-KNOWN_COMMANDS_MARKER = "COMANDOS CONHECIDOS QUE JÁ FUNCIONARAM"
-FILE_LIST_MARKER = "ARQUIVOS ATUAIS DO PROJETO"
-TASK_CONTEXT_MARKER = "TASK PAI:"
-EXECUTION_RESULT_MARKER = "RESULTADO DA EXECUÇÃO:"
+PROJECT_SUMMARY_MARKER = "PROJECT SUMMARY:"
+OBJECTIVE_CHECKLIST_MARKER = "OBJECTIVE CHECKLIST"
+ERROR_CHECKLIST_MARKER = "CURRENT ERROR CHECKLIST"
+PLANNER_ERROR_MEMORY_MARKER = "FORBIDDEN ERRORS"
+ACTION_HISTORY_MARKER = "ACTION HISTORY"
+KNOWN_COMMANDS_MARKER = "KNOWN WORKING COMMANDS"
+FILE_LIST_MARKER = "CURRENT PROJECT FILES"
+TASK_CONTEXT_MARKER = "PARENT TASK:"
+EXECUTION_RESULT_MARKER = "EXECUTION RESULT:"
 
 # Blocos de erro/ retry anexados ao final do contexto. Ordem não importa;
 # a detecção usa o menor índice dentre todos após o resultado/arquivos.
-# NOTA: "ERRO DE REPETIÇÃO:" é prefixo de "ERRO DE REPETIÇÃO/ESTAGNAÇÃO:"?
-# Não — o segundo tem "/" após REPETIÇÃO, então a busca com ":" não colide.
+# NOTA: "REPETITION ERROR:" é prefixo de "REPETITION/STAGNATION ERROR:"?
+# Não — o segundo tem "/" após REPETITION, então a busca com ":" não colide.
 ERROR_BLOCK_MARKERS = (
-    "ERRO DE VALIDAÇÃO ANTES DO FINISH:",
-    "ERRO DE REPETIÇÃO/ESTAGNAÇÃO:",
-    "ERRO DE REPETIÇÃO:",
-    "INVESTIGAÇÃO REALIZADA COMO ÚLTIMO RECURSO",
-    "CORREÇÃO DA TENTATIVA ANTERIOR:",
-    "ERRO REPETIDO — LEIA COM ATENÇÃO:",
+    "VALIDATION ERROR BEFORE FINISH:",
+    "REPETITION/STAGNATION ERROR:",
+    "REPETITION ERROR:",
+    "INVESTIGATION PERFORMED AS A LAST RESORT",
+    "PREVIOUS ATTEMPT CORRECTION:",
+    "REPEATED ERROR — READ CAREFULLY:",
 )
 
 

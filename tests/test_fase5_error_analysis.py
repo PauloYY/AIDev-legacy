@@ -45,7 +45,7 @@ def _no_disk_persistence(monkeypatch):
 # --------------------------------------------------------------------------
 
 FAIL_3 = (
-    "STATUS: falha (exit code 1)\n"
+    "STATUS: failure (exit code 1)\n"
     "FAILED test_cart.py::test_total - assert 10 == 12\n"
     "test_cart.py:42 AssertionError\n"
     "FAILED test_cart.py::test_add - assert 1 == 2\n"
@@ -53,7 +53,7 @@ FAIL_3 = (
     "src/cart.py:10 KeyError\n"
 )
 
-PASS = "STATUS: sucesso (exit code 0)\nSTDOUT:\n3 passed\nSTDERR:\n(vazio)"
+PASS = "STATUS: success (exit code 0)\nSTDOUT:\n3 passed\nSTDERR:\n(empty)"
 
 
 class _ScriptedLLM:
@@ -166,7 +166,7 @@ def test_no_error_no_problems_no_call():
 def test_single_failure_fallback():
     analysis = ErrorAnalyzer().analyze(
         "python -m pytest -q",
-        "STATUS: falha (exit code 1)\nFAILED test_x.py::test_a\nboom")
+        "STATUS: failure (exit code 1)\nFAILED test_x.py::test_a\nboom")
     assert len(analysis.problems) == 1
     problem = analysis.problems[0]
     assert problem.test == "test_x.py::test_a"
@@ -186,7 +186,7 @@ def test_multiple_failures_single_call():
          "affected_files": []},
         {"error": "FAILED c", "test": "", "affected_files": []},
     ]}))
-    out = ("STATUS: falha (exit code 1)\nFAILED a\nFAILED b\nFAILED c\n"
+    out = ("STATUS: failure (exit code 1)\nFAILED a\nFAILED b\nFAILED c\n"
            "a.py b.py")
     analysis = ErrorAnalyzer(llm=llm).analyze("pytest", out)
     assert len(llm.calls) == 1
@@ -204,7 +204,7 @@ def test_five_errors_one_call():
         {"error": f"FAILED t{i}.py::test_{i} boom"} for i in range(5)]}
     ))
     analysis = ErrorAnalyzer(llm=llm).analyze(
-        "pytest", f"STATUS: falha (exit code 1)\n{lines}\n" + " ".join(
+        "pytest", f"STATUS: failure (exit code 1)\n{lines}\n" + " ".join(
             f"t{i}.py" for i in range(5)))
     assert len(llm.calls) == 1
     assert len(analysis.problems) == 5
@@ -215,7 +215,7 @@ def test_ungrounded_files_dropped():
         {"error": "FAILED a", "test": "a.py::t",
          "affected_files": ["a.py", "invented_service.py"]}]}))
     analysis = ErrorAnalyzer(llm=llm).analyze(
-        "pytest", "STATUS: falha\nFAILED a\na.py")
+        "pytest", "STATUS: failure\nFAILED a\na.py")
     assert analysis.problems[0].affected_files == ["a.py"]
 
 
@@ -225,7 +225,7 @@ def test_invalid_response_falls_back():
                 json.dumps({"problems": []}), "", None):
         llm = _ScriptedLLM(content=bad)
         analysis = ErrorAnalyzer(llm=llm).analyze(
-            "pytest", "STATUS: falha (exit code 1)\nFAILED t.py::x\n"
+            "pytest", "STATUS: failure (exit code 1)\nFAILED t.py::x\n"
                       "t.py boom")
         assert analysis.fallback_used is True
         assert len(analysis.problems) == 1
@@ -237,14 +237,14 @@ def test_entries_without_evidence_skipped():
         {"error": "  ", "test": "x"}, "string", {"no_error": 1},
         {"error": "FAILED real", "test": "r.py::t"}]}))
     analysis = ErrorAnalyzer(llm=llm).analyze(
-        "pytest", "STATUS: falha\nFAILED real\nr.py")
+        "pytest", "STATUS: failure\nFAILED real\nr.py")
     assert [p.error for p in analysis.problems] == ["FAILED real"]
 
 
 def test_llm_error_falls_back():
     llm = _ScriptedLLM(error=TimeoutError("slow"))
     analysis = ErrorAnalyzer(llm=llm).analyze(
-        "pytest", "STATUS: falha (exit code 1)\nFAILED t.py::x")
+        "pytest", "STATUS: failure (exit code 1)\nFAILED t.py::x")
     assert analysis.fallback_used is True
     assert analysis.error == "llm_error: TimeoutError"
     assert len(analysis.problems) == 1
@@ -252,14 +252,14 @@ def test_llm_error_falls_back():
 
 def test_no_evidence_no_problems():
     analysis = ErrorAnalyzer().analyze(
-        "pytest", "STATUS: falha (exit code 1)\nblablabla sem padrão")
+        "pytest", "STATUS: failure (exit code 1)\nblablabla sem padrão")
     assert analysis.problems == []
     assert analysis.fallback_used is True  # tentou, sem inventar
 
 
 def test_llm_none_uses_fallback():
     analysis = ErrorAnalyzer(llm=None).analyze(
-        "pytest", "STATUS: falha (exit code 1)\nFAILED t.py::x")
+        "pytest", "STATUS: failure (exit code 1)\nFAILED t.py::x")
     assert analysis.llm_calls == 0
     assert len(analysis.problems) == 1
 
@@ -278,7 +278,7 @@ def test_normalize_helpers():
 def test_max_problems_cap():
     lines = "\n".join(f"FAILED t{i}.py::test_{i}" for i in range(30))
     analysis = ErrorAnalyzer(max_problems=5).analyze(
-        "pytest", f"STATUS: falha\n{lines}")
+        "pytest", f"STATUS: failure\n{lines}")
     assert len(analysis.problems) == 5
 
 
@@ -297,7 +297,7 @@ def test_analyzer_tracked_as_component():
 
     client = LLMClient(_Provider())
     analysis = ErrorAnalyzer(llm=client).analyze(
-        "pytest", "STATUS: falha\nFAILED a\na.py")
+        "pytest", "STATUS: failure\nFAILED a\na.py")
     assert len(analysis.problems) == 1
     stats = client.usage.component_stats()
     assert stats["ErrorAnalyzer"]["calls"] == 1
@@ -468,7 +468,7 @@ def test_pending_problem_blocks_retest(tmp_path):
     contexts = runner.planner.received_contexts
     assert any("TEST_BLOCKED_BY_PENDING_PROBLEMS" in ctx
                for ctx in contexts)
-    assert all("ERRO NA EXECUÇÃO DA TOOL" not in ctx
+    assert all("TOOL EXECUTION ERROR" not in ctx
                or "TEST_BLOCKED" in ctx for ctx in contexts)
 
 
@@ -581,7 +581,7 @@ def test_analyzer_flag_off_uses_legacy_mirror(tmp_path, monkeypatch):
             self._checks = 0
 
         def render(self):
-            return "CHECKLIST DE ERROS ATUAIS\n- 1. falha extraída 1"
+            return "CURRENT ERROR CHECKLIST\n- 1. falha extraída 1"
 
         def generate(self, command, output, iteration=None):
             pass
@@ -609,11 +609,11 @@ def test_analyzer_flag_off_uses_legacy_mirror(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 def _three_fail_tools():
-    fail_a = ("STATUS: falha (exit code 1)\nFAILED a.py::test_a\n"
+    fail_a = ("STATUS: failure (exit code 1)\nFAILED a.py::test_a\n"
               "a.py:10 AssertionError\n")
-    fail_b = ("STATUS: falha (exit code 1)\nFAILED b.py::test_b\n"
+    fail_b = ("STATUS: failure (exit code 1)\nFAILED b.py::test_b\n"
               "b.py:20 ValueError\n")
-    fail_c = ("STATUS: falha (exit code 1)\nFAILED c.py::test_c\n"
+    fail_c = ("STATUS: failure (exit code 1)\nFAILED c.py::test_c\n"
               "c.py:30 KeyError\n")
     return _ScriptedTools([fail_a + fail_b + fail_c, PASS])
 
@@ -662,7 +662,7 @@ def test_partial_fix_keeps_gate_closed(tmp_path):
 
 def test_one_correction_covers_related_problems(tmp_path):
     trace = _trace(tmp_path)
-    fail_both = ("STATUS: falha (exit code 1)\n"
+    fail_both = ("STATUS: failure (exit code 1)\n"
                  "FAILED u.py::test_a\nFAILED u.py::test_b\n"
                  "u.py:5 ValueError\n")
     tools = _ScriptedTools([fail_both, PASS])
@@ -688,9 +688,9 @@ def test_one_correction_covers_related_problems(tmp_path):
 
 def test_new_error_creates_new_problem(tmp_path):
     trace = _trace(tmp_path)
-    fail_old = ("STATUS: falha (exit code 1)\nFAILED a.py::test_a\n"
+    fail_old = ("STATUS: failure (exit code 1)\nFAILED a.py::test_a\n"
                 "a.py:1 AssertionError\n")
-    fail_new = ("STATUS: falha (exit code 1)\nFAILED b.py::test_b\n"
+    fail_new = ("STATUS: failure (exit code 1)\nFAILED b.py::test_b\n"
                 "b.py:2 ValueError\n")
     tools = _ScriptedTools([fail_old, fail_new])
     test = _run_task("python -m pytest -q")
@@ -714,8 +714,8 @@ def test_new_error_creates_new_problem(tmp_path):
 
 def test_same_test_new_error_invalidates_old(tmp_path):
     trace = _trace(tmp_path)
-    fail_v1 = ("STATUS: falha (exit code 1)\nFAILED a.py::test_a boom1\n")
-    fail_v2 = ("STATUS: falha (exit code 1)\nFAILED a.py::test_a boom2\n")
+    fail_v1 = ("STATUS: failure (exit code 1)\nFAILED a.py::test_a boom1\n")
+    fail_v2 = ("STATUS: failure (exit code 1)\nFAILED a.py::test_a boom2\n")
     tools = _ScriptedTools([fail_v1, fail_v2])
     test = _run_task("python -m pytest -q")
     fix = _write_task(path="a.py")

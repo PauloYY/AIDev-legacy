@@ -98,8 +98,8 @@ def check_naming_convention(
         return None
 
     return (
-        f"Os arquivos existentes em '{directory.name}/' seguem o "
-        f"padrão {convention}, mas o nome do arquivo novo está em "
-        f"{new_style}. Renomeie o arquivo para manter a convenção "
-        "já estabelecida nessa pasta."
+        f"Existing files in '{directory.name}/' follow the "
+        f"{convention} pattern, but the new file name uses "
+        f"{new_style}. Rename the file to keep the convention "
+        "already established in that folder."
     )

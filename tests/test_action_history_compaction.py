@@ -36,7 +36,7 @@ def test_write_file_hides_full_content(memory):
             "file_path": "models/user.py",
             "content": big,
         },
-        result="Arquivo escrito com sucesso",
+        result="File written successfully",
         success=True,
     )
     history = memory.render_history()
@@ -110,7 +110,7 @@ def test_other_tools_preserve_semantics(memory):
         iteration=2,
         tool="run_command",
         arguments={"project_name": "p", "command": "python -m pytest -q"},
-        result="STATUS: sucesso",
+        result="STATUS: success",
         success=True,
     )
     memory.record(
@@ -200,7 +200,7 @@ def test_semantic_info_preserved(memory):
     history = memory.render_history()
     assert "write_file" in history
     assert "app/services/user_service.py" in history
-    assert "FALHOU" in history
+    assert "FAILED" in history
     assert "run_command" in history
     assert "python -m pytest" in history
 
@@ -266,8 +266,8 @@ def test_context_breakdown_still_measures_action_history(memory):
         success=True,
     )
     ctx = (
-        "RESUMO DO PROJETO:\ns\n\n"
-        "HISTÓRICO DE AÇÕES (memória):\n"
+        "PROJECT SUMMARY:\ns\n\n"
+        "ACTION HISTORY (memory):\n"
         f"{memory.render_history()}\n"
     )
     planner.plan(objective="o", context=ctx, iteration=1)
@@ -291,7 +291,7 @@ def test_growth_scales_with_metadata_not_file_size(memory):
                 "file_path": f"src/file_{i:02d}.py",
                 "content": "x" * file_kb,
             },
-            result="STATUS: sucesso",
+            result="STATUS: success",
             success=True,
         )
     after = memory.render_history()
@@ -307,7 +307,7 @@ def test_growth_scales_with_metadata_not_file_size(memory):
                 "file_path": f"src/file_{i:02d}.py",
                 "content": "x" * file_kb,
             },
-            True, "STATUS: sucesso",
+            True, "STATUS: success",
         )
         for i in range(1, n + 1)
     ]

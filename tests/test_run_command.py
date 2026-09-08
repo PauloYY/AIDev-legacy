@@ -53,7 +53,7 @@ def test_run_command_success(projects_root):
 
     result = run_command("proj", "python3 main.py")
 
-    assert "STATUS: sucesso (exit code 0)" in result
+    assert "STATUS: success (exit code 0)" in result
     assert "hello" in result
 
 
@@ -62,7 +62,7 @@ def test_run_command_failure_captures_output(projects_root):
 
     result = run_command("proj", "python3 boom.py")
 
-    assert "STATUS: falha" in result
+    assert "STATUS: failure" in result
     assert "deu ruim" in result
 
 
@@ -120,7 +120,7 @@ def test_run_command_supports_shell_chaining(projects_root):
 
     result = run_command("proj", "python3 a.py && echo done")
 
-    assert "STATUS: sucesso" in result
+    assert "STATUS: success" in result
     assert "done" in result
 
 
@@ -129,7 +129,7 @@ def test_run_command_unknown_binary_is_a_failure_not_an_exception(projects_root)
 
     result = run_command("proj", "comando-que-nao-existe-123")
 
-    assert "STATUS: falha" in result
+    assert "STATUS: failure" in result
 
 
 def test_run_command_empty_raises(projects_root):
@@ -164,5 +164,5 @@ def test_run_command_uses_docker_sandbox_when_enabled(projects_root, monkeypatch
 
     result = run_command("proj", "python main.py")
 
-    assert "STATUS: sucesso" in result
+    assert "STATUS: success" in result
     assert captured["command"] == ["/bin/sh", "-c", "python main.py"]

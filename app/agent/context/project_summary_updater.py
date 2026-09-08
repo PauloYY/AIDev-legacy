@@ -208,41 +208,41 @@ class ProjectSummaryUpdater:
         result_repr = self._format_result_for_prompt(result)
 
         return f"""
-Você é responsável por manter o resumo persistente
-de um projeto de desenvolvimento.
+You are responsible for maintaining the persistent
+summary of a software development project.
 
-Atualize o resumo do projeto utilizando as informações
-da tarefa que acabou de ser executada.
+Update the project summary using the information
+from the task that just ran.
 
-OBJETIVO:
+OBJECTIVE:
 {objective}
 
-RESUMO ATUAL:
+CURRENT SUMMARY:
 {current_summary}
 
-TASK EXECUTADA:
+EXECUTED TASK:
 Tool: {task.tool}
 
-ARGUMENTOS:
+ARGUMENTS:
 {arguments_repr}
 
-RESULTADO:
+RESULT:
 {result_repr}
 
-REGRAS:
-- Retorne SOMENTE o conteúdo completo do novo resumo.
-- Não retorne JSON.
-- Preserve informações importantes do resumo atual.
-- Incorpore as novas informações descobertas.
-- Não invente informações.
-- Remova informações que comprovadamente estejam incorretas.
-- O resumo deve representar o estado atual conhecido do projeto.
-- Seja conciso.
-- Limite o resumo a no máximo 300 palavras.
-- Não liste nomes de arquivos nem a estrutura de pastas — isso já é
-  fornecido separadamente como memória operacional determinística.
-  Foque em decisões de design, regras de negócio, convenções
-  adotadas e o que ainda falta fazer.
+RULES:
+- Return ONLY the full content of the new summary.
+- Do not return JSON.
+- Preserve important information from the current summary.
+- Incorporate newly discovered information.
+- Do not invent information.
+- Remove information proven to be incorrect.
+- The summary must represent the currently known state of the project.
+- Be concise.
+- Limit the summary to at most 300 words.
+- Do not list file names or the folder structure — that is already
+  provided separately as deterministic operational memory.
+  Focus on design decisions, business rules, adopted conventions
+  and what still needs to be done.
 """
 
     def _format_arguments_for_prompt(

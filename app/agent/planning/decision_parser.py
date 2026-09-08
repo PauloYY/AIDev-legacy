@@ -18,7 +18,7 @@ class DecisionParser:
         try:
             data = parse_json_object(content)
         except json.JSONDecodeError as exc:
-            raise ValueError("A LLM retornou um JSON inválido.") from exc
+            raise ValueError("The LLM returned invalid JSON.") from exc
 
         action = data.get("action")
         checklist_progress = self._parse_checklist_progress(data)
@@ -48,7 +48,7 @@ class DecisionParser:
             return recovered
 
         raise ValueError(
-            f"Ação de decisão inválida: {action!r}"
+            f"Invalid decision action: {action!r}"
         )
 
     def _parse_checklist_progress(self, data: dict) -> list[int] | None:
@@ -120,7 +120,7 @@ class DecisionParser:
 
         if not isinstance(task_data, dict):
             raise ValueError(
-                "Uma decisão 'task' deve possuir um objeto 'task'."
+                "A 'task' decision must contain a 'task' object."
             )
 
         dependencies = [

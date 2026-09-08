@@ -51,14 +51,14 @@ class TaskDecisionMaker:
 
         if response.tool_calls:
             raise LLMInvalidResponseError(
-                "O executor tentou executar ferramentas diretamente. "
-                "O TaskDecisionMaker deve retornar somente um objeto JSON em texto."
+                "The executor tried to execute tools directly. "
+                "The TaskDecisionMaker must return only a JSON object as text."
             )
 
         if response.content is None:
             raise LLMInvalidResponseError(
-                "O executor não retornou conteúdo. "
-                "A resposta deve conter somente um objeto JSON em texto."
+                "The executor returned no content. "
+                "The response must contain only a JSON object as text."
             )
 
         return self.parser.parse(response.content)
@@ -67,36 +67,36 @@ class TaskDecisionMaker:
     def _build_prompt(objective: str, task: Task, context: str) -> str:
         """Prompt integral do Executor (legado, byte a byte)."""
         return f"""
-Você é o executor de uma tarefa de desenvolvimento.
+You are the executor of a software development task.
 
-Sua função é decidir como executar a task fornecida,
-utilizando as informações disponíveis no contexto.
+Your role is to decide how to execute the given task,
+using the information available in the context.
 
-OBJETIVO:
+OBJECTIVE:
 {objective}
 
 TASK:
 Tool: {task.tool}
 
-ARGUMENTOS:
+ARGUMENTS:
 {task.arguments}
 
-CONTEXTO DAS DEPENDÊNCIAS:
+DEPENDENCY CONTEXT:
 {context}
 
-REGRAS:
-- Retorne SOMENTE JSON válido.
-- NÃO execute ferramentas.
-- NÃO produza tool calls.
-- Use exclusivamente a tool indicada na task.
-- Não crie novas tasks.
-- Não crie dependencies.
-- Não altere a finalidade da task.
-- Os argumentos devem ser válidos para a tool.
-- Para write_file, forneça o conteúdo completo do arquivo.
-- Para read_file, mantenha os argumentos necessários para leitura.
+RULES:
+- Return ONLY valid JSON.
+- Do NOT execute tools.
+- Do NOT produce tool calls.
+- Use exclusively the tool indicated in the task.
+- Do not create new tasks.
+- Do not create dependencies.
+- Do not change the purpose of the task.
+- Arguments must be valid for the tool.
+- For write_file, provide the full file content.
+- For read_file, keep the arguments needed for reading.
 
-FORMATO:
+FORMAT:
 {{
     "tool": "{task.tool}",
     "arguments": {{
@@ -104,7 +104,7 @@ FORMATO:
     }}
 }}
 
-Retorne SOMENTE o JSON.
+Return ONLY the JSON.
 """
 
     @staticmethod
@@ -122,26 +122,26 @@ Retorne SOMENTE o JSON.
         proibições de execução/criação viram 2 bullets) e fecho
         duplicado ("Retorne SOMENTE o JSON" aparecia 2x).
         """
-        return f"""Você é o executor da task abaixo. Decida os argumentos finais de execução usando o contexto.
+        return f"""You are the executor of the task below. Decide the final execution arguments using the context.
 
-OBJETIVO:
+OBJECTIVE:
 {objective}
 
 TASK:
 Tool: {task.tool}
 
-ARGUMENTOS:
+ARGUMENTS:
 {task.arguments}
 
-CONTEXTO DAS DEPENDÊNCIAS:
+DEPENDENCY CONTEXT:
 {context}
 
-REGRAS:
-- Retorne SOMENTE JSON válido. NÃO execute ferramentas nem produza tool calls.
-- Use exclusivamente a tool indicada; não crie tasks/dependencies nem altere a finalidade.
-- Argumentos válidos para a tool. Para write_file, forneça o conteúdo completo do arquivo.
+RULES:
+- Return ONLY valid JSON. Do NOT execute tools or produce tool calls.
+- Use exclusively the indicated tool; do not create tasks/dependencies or change the purpose.
+- Valid arguments for the tool. For write_file, provide the full file content.
 
-FORMATO:
+FORMAT:
 {{
     "tool": "{task.tool}",
     "arguments": {{

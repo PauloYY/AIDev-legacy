@@ -34,15 +34,15 @@ class TaskContextBuilder:
             )
 
         context = [
-            "TASK PAI:",
+            "PARENT TASK:",
             f"Tool: {task.tool}",
             f"Arguments: {task.arguments}",
             "",
-            "DEPENDÊNCIAS:",
+            "DEPENDENCIES:",
         ]
 
         if not task.dependencies:
-            context.append("Nenhuma.")
+            context.append("None.")
 
         for index, (dependency, result) in enumerate(
             zip(task.dependencies, dependency_results),
@@ -51,11 +51,11 @@ class TaskContextBuilder:
             context.extend(
                 [
                     "",
-                    f"DEPENDÊNCIA {index}:",
+                    f"DEPENDENCY {index}:",
                     f"Tool: {dependency.tool}",
                     f"Arguments: {dependency.arguments}",
                     "",
-                    "RESULTADO:",
+                    "RESULT:",
                     self._format_result(result),
                 ]
             )
@@ -90,7 +90,7 @@ class TaskContextBuilder:
             return text
         omitted = len(text) - limit
         return (
-            f"[resultado truncado: {len(text)} chars no total]\n"
+            f"[truncated result: {len(text)} chars in total]\n"
             f"{text[:limit]}"
-            f"\n... [+{omitted} chars omitidos]"
+            f"\n... [+{omitted} chars omitted]"
         )

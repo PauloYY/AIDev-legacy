@@ -65,7 +65,7 @@ class ToolRegistry:
     def get(self, name: str) -> Tool:
         if name not in self._tools:
             raise ValueError(
-                f"Tool não encontrada: {name}"
+                f"Tool not found: {name}"
             )
 
         return self._tools[name]
@@ -84,7 +84,7 @@ class ToolRegistry:
                     name, 0.0, False, error="ValueError",
                 )
             raise ValueError(
-                f"Tool não encontrada: {name}"
+                f"Tool not found: {name}"
             )
 
         start = time.monotonic()

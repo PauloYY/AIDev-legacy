@@ -189,15 +189,15 @@ def _temp_signal(path: str) -> str | None:
     name = _basename(path)
     lowered = name.lower()
     if _suffix(path) in TEMP_SUFFIXES:
-        return f"sufixo {_suffix(path)}"
+        return f"suffix {_suffix(path)}"
     if lowered.endswith("~"):
-        return "sufixo ~"
+        return "suffix ~"
     stem = _stem(path).lower()
     for prefix in TEMP_STEM_PREFIXES:
         if stem.startswith(prefix):
-            return f"prefixo {prefix}"
+            return f"prefix {prefix}"
     if any(p.lower() in TEMP_DIR_PARTS for p in _parts(path)[:-1]):
-        return "diretório temporário"
+        return "temporary directory"
     return None
 
 
@@ -205,10 +205,10 @@ def _superseded_signal(path: str) -> str | None:
     stem = _stem(path).lower()
     for prefix in SUPERSEDED_STEM_PREFIXES:
         if stem.startswith(prefix):
-            return f"prefixo {prefix}"
+            return f"prefix {prefix}"
     for suffix in SUPERSEDED_STEM_SUFFIXES:
         if stem.endswith(suffix):
-            return f"sufixo {suffix}"
+            return f"suffix {suffix}"
     return None
 
 
@@ -359,23 +359,23 @@ def analyze_unnecessary_files(
         if _is_special_file(path):
             keep.add(path)
             keep_evidence[path].append(
-                f"arquivo especial ({_basename(path)})"
+                f"special file ({_basename(path)})"
             )
         if _is_test_file(path):
             keep.add(path)
-            keep_evidence[path].append("arquivo de teste")
+            keep_evidence[path].append("test file")
         if _is_entrypoint(path):
             keep.add(path)
             keep_evidence[path].append(
-                f"possível entrypoint ({_basename(path)})"
+                f"possible entrypoint ({_basename(path)})"
             )
         for importer in imported_by.get(path, []):
             keep.add(path)
-            keep_evidence[path].append(f"importado por {importer}")
+            keep_evidence[path].append(f"imported by {importer}")
         for other, hits in substring_refs.get(path, []):
             keep.add(path)
             keep_evidence[path].append(
-                f"referenciado em {other} ({hits} linha(s))"
+                f"referenced in {other} ({hits} line(s))"
             )
         for config in config_paths:
             if config == path:
@@ -387,7 +387,7 @@ def analyze_unnecessary_files(
             if any(t and t in content for t in tokens):
                 keep.add(path)
                 keep_evidence[path].append(
-                    f"citado em configuração ({config})"
+                    f"mentioned in config ({config})"
                 )
 
     # Segunda passada: candidatos (não-KEEP) + classificação.
@@ -396,18 +396,18 @@ def analyze_unnecessary_files(
             continue
         content = contents.get(path)
         evidences = [
-            "nenhuma referência encontrada em outros arquivos",
-            "não é entrypoint",
-            "não aparece em configuração",
-            "não é usado por testes",
-            "não é arquivo especial",
+            "no references found in other files",
+            "not an entrypoint",
+            "not mentioned in config",
+            "not used by tests",
+            "not a special file",
         ]
         if content is None:
             report.candidates.append(FileCandidate(
                 path=path,
                 verdict=UNCERTAIN,
                 evidences=[
-                    "conteúdo ilegível (binário?) — sem análise",
+                    "unreadable content (binary?) — no analysis",
                     *evidences,
                 ],
             ))
@@ -416,12 +416,12 @@ def analyze_unnecessary_files(
         temp = _temp_signal(path)
         if temp:
             evidences.append(
-                f"nome sugere arquivo temporário ({temp})"
+                f"name suggests a temporary file ({temp})"
             )
         superseded = _superseded_signal(path)
         if superseded:
             evidences.append(
-                f"nome sugere arquivo substituído ({superseded})"
+                f"name suggests a superseded file ({superseded})"
             )
 
         duplicate_of_kept: str | None = None
@@ -435,13 +435,13 @@ def analyze_unnecessary_files(
                 if kept_dupes:
                     duplicate_of_kept = sorted(kept_dupes)[0]
                     evidences.append(
-                        "duplicata exata de "
-                        f"{duplicate_of_kept} (que é necessário)"
+                        "exact duplicate of "
+                        f"{duplicate_of_kept} (which is needed)"
                     )
                 else:
                     evidences.append(
-                        "duplicata exata de "
-                        f"{sorted(group)[0]} (também sem referências)"
+                        "exact duplicate of "
+                        f"{sorted(group)[0]} (also unreferenced)"
                     )
         except Exception:
             pass
@@ -464,11 +464,11 @@ def format_evidence_for_llm(report: UnnecessaryFilesReport) -> str:
     Uso opcional, só quando houver ambiguidade real.
     """
     lines = [
-        "CANDIDATOS A ARQUIVOS DESNECESSÁRIOS "
-        f"({report.files_scanned} arquivo(s) analisado(s)):",
+        "UNNECESSARY FILE CANDIDATES "
+        f"({report.files_scanned} file(s) analyzed):",
     ]
     if not report.candidates:
-        lines.append("(nenhum candidato)")
+        lines.append("(no candidates)")
         return "\n".join(lines)
     for candidate in sorted(
         report.candidates, key=lambda c: (c.verdict, c.path)

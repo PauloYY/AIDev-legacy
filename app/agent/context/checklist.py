@@ -38,26 +38,25 @@ class ProjectChecklist:
 
     def generate(self, objective: str) -> None:
         prompt = f"""
-Você é responsável por quebrar o objetivo abaixo em um checklist de
-etapas concretas e verificáveis para um agente autônomo de
-desenvolvimento de software seguir em ordem.
+You are responsible for breaking the objective below into a checklist of
+concrete, verifiable steps for an autonomous software development
+agent to follow in order.
 
-OBJETIVO:
+OBJECTIVE:
 {objective}
 
-REGRAS:
-- Retorne SOMENTE um JSON no formato:
-  {{"items": ["primeira etapa", "segunda etapa", ...]}}
-- Cada item deve ser uma etapa concreta e verificável (ex.: "Criar
-  modelo Client com os campos id, nome e status", "Implementar o
-  endpoint POST /clients", "Escrever testes para a fila de
-  prioridade"). Evite itens vagos como "planejar" ou "revisar o
-  código".
-- Ordene os itens na sequência lógica de implementação.
-- Inclua, como último item, validar o resultado executando os
-  testes/build/programa antes de finalizar.
-- Use entre {self.MIN_ITEMS} e {self.MAX_ITEMS} itens — prefira o
-  menor número que cobre o objetivo por completo.
+RULES:
+- Return ONLY JSON in the format:
+  {{"items": ["first step", "second step", ...]}}
+- Each item must be a concrete, verifiable step (e.g. "Create the
+  Client model with id, name and status fields", "Implement the
+  POST /clients endpoint", "Write tests for the priority queue").
+  Avoid vague items like "plan" or "review the code".
+- Order the items in the logical implementation sequence.
+- Include, as the last item, validating the result by running the
+  tests/build/program before finishing.
+- Use between {self.MIN_ITEMS} and {self.MAX_ITEMS} items — prefer the
+  smallest number that fully covers the objective.
 """
 
         response = self.llm.generate(
@@ -102,13 +101,13 @@ REGRAS:
 
     def render(self) -> str:
         if not self._items:
-            return "(checklist ainda não definido)"
+            return "(checklist not defined yet)"
 
         lines = [
-            "CHECKLIST DO OBJETIVO (definido uma única vez no início "
-            "desta run; a descrição de cada item nunca muda — só o "
-            "estado concluído/pendente. Ao concluir um item, inclua "
-            '"checklist_progress": [ids] na sua decisão):',
+            "OBJECTIVE CHECKLIST (defined once at the start of "
+            "this run; each item description never changes — only the "
+            "done/pending state. When you complete an item, include "
+            '"checklist_progress": [ids] in your decision):',
         ]
 
         for item in self._items:

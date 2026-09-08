@@ -12,7 +12,7 @@ def memory(projects_root):
 
 
 def test_render_history_empty(memory):
-    assert "Nenhuma ação" in memory.render_history()
+    assert "No actions" in memory.render_history()
 
 
 def test_record_appears_in_history(memory):
@@ -20,7 +20,7 @@ def test_record_appears_in_history(memory):
         iteration=1,
         tool="write_file",
         arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
-        result="Arquivo escrito com sucesso: a.py",
+        result="File written successfully: a.py",
         success=True,
     )
 
@@ -40,7 +40,7 @@ def test_failed_action_marked_as_falhou(memory):
         success=False,
     )
 
-    assert "FALHOU" in memory.render_history()
+    assert "FAILED" in memory.render_history()
 
 
 def test_history_respects_max_actions(memory):
@@ -67,7 +67,7 @@ def test_reset_clears_history(memory):
     )
     memory.reset()
 
-    assert "Nenhuma ação" in memory.render_history()
+    assert "No actions" in memory.render_history()
 
 
 def test_render_files_reflects_real_disk_state(memory, projects_root):
@@ -85,11 +85,11 @@ def test_render_combines_history_and_files(memory, projects_root):
 
     output = memory.render("demo")
 
-    assert "HISTÓRICO DE AÇÕES" in output
-    assert "ARQUIVOS ATUAIS DO PROJETO" in output
+    assert "ACTION HISTORY" in output
+    assert "CURRENT PROJECT FILES" in output
 
 def test_known_test_command_starts_undiscovered(memory):
-    assert "ainda não descoberto" in memory.render_known_commands()
+    assert "not discovered yet" in memory.render_known_commands()
 
 
 def test_records_successful_test_command(memory):
@@ -97,14 +97,14 @@ def test_records_successful_test_command(memory):
         iteration=1,
         tool="run_command",
         arguments={"project_name": "p", "command": "npm test"},
-        result="STATUS: sucesso (exit code 0)",
+        result="STATUS: success (exit code 0)",
         success=True,
     )
 
     rendered = memory.render_known_commands()
 
-    assert "- Teste: npm test" in rendered
-    assert "Build: ainda não descoberto" in rendered
+    assert "- Test: npm test" in rendered
+    assert "Build: not discovered yet" in rendered
 
 
 def test_only_successful_commands_are_remembered(memory):
@@ -112,11 +112,11 @@ def test_only_successful_commands_are_remembered(memory):
         iteration=1,
         tool="run_command",
         arguments={"project_name": "p", "command": "npm test"},
-        result="STATUS: falha (exit code 1)",
+        result="STATUS: failure (exit code 1)",
         success=False,
     )
 
-    assert "Teste: ainda não descoberto" in memory.render_known_commands()
+    assert "Test: not discovered yet" in memory.render_known_commands()
 
 
 def test_later_successful_test_command_overwrites_earlier_one(memory):
@@ -156,7 +156,7 @@ def test_records_successful_build_command_separately(memory):
     rendered = memory.render_known_commands()
 
     assert "- Build: npm run build" in rendered
-    assert "Teste: ainda não descoberto" in rendered
+    assert "Test: not discovered yet" in rendered
 
 
 def test_non_run_command_tools_do_not_affect_known_commands(memory):
@@ -168,7 +168,7 @@ def test_non_run_command_tools_do_not_affect_known_commands(memory):
         success=True,
     )
 
-    assert "ainda não descoberto" in memory.render_known_commands()
+    assert "not discovered yet" in memory.render_known_commands()
 
 
 def test_reset_clears_known_commands(memory):
@@ -181,7 +181,7 @@ def test_reset_clears_known_commands(memory):
     )
     memory.reset()
 
-    assert "ainda não descoberto" in memory.render_known_commands()
+    assert "not discovered yet" in memory.render_known_commands()
 
 
 def test_render_includes_known_commands_section(memory, projects_root):
@@ -189,7 +189,7 @@ def test_render_includes_known_commands_section(memory, projects_root):
 
     output = memory.render("demo")
 
-    assert "COMANDOS CONHECIDOS QUE JÁ FUNCIONARAM" in output
+    assert "KNOWN WORKING COMMANDS" in output
 
 
 def test_jest_command_is_recognized_as_test_command(memory):
@@ -200,7 +200,7 @@ def test_jest_command_is_recognized_as_test_command(memory):
         iteration=1,
         tool="run_command",
         arguments={"project_name": "p", "command": "npx jest --no-coverage"},
-        result="STATUS: sucesso (exit code 0)",
+        result="STATUS: success (exit code 0)",
         success=True,
     )
 
@@ -219,7 +219,7 @@ def test_last_action_failed_jest_command_is_detected(memory):
         tool="run_command",
         arguments={"project_name": "p", "command": "npm test"},
         result=(
-            "STATUS: falha (exit code 1)\n\n"
+            "STATUS: failure (exit code 1)\n\n"
             "STDOUT:\n> jest --detectOpenHandles\n\n"
             "STDERR:\nFAIL tests/RideService.test.js"
         ),
@@ -234,7 +234,7 @@ def test_last_action_failed_build_command_is_detected(memory):
         iteration=1,
         tool="run_command",
         arguments={"project_name": "p", "command": "npm run build"},
-        result="STATUS: falha (exit code 1)",
+        result="STATUS: failure (exit code 1)",
         success=False,
     )
 
@@ -246,7 +246,7 @@ def test_last_action_successful_test_command_is_not_a_trigger(memory):
         iteration=1,
         tool="run_command",
         arguments={"project_name": "p", "command": "npm test"},
-        result="STATUS: sucesso (exit code 0)",
+        result="STATUS: success (exit code 0)",
         success=True,
     )
 
@@ -258,7 +258,7 @@ def test_last_action_failed_non_test_command_is_not_a_trigger(memory):
         iteration=1,
         tool="run_command",
         arguments={"project_name": "p", "command": "ls -la"},
-        result="STATUS: falha (exit code 1)",
+        result="STATUS: failure (exit code 1)",
         success=False,
     )
 
@@ -282,7 +282,7 @@ def test_only_the_most_recent_action_counts_as_trigger(memory):
         iteration=1,
         tool="run_command",
         arguments={"project_name": "p", "command": "npm test"},
-        result="STATUS: falha (exit code 1)",
+        result="STATUS: failure (exit code 1)",
         success=False,
     )
     memory.record(

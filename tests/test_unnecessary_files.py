@@ -54,7 +54,7 @@ def test_temp_file_is_safe(projects_root):
 
     candidates = _by_path(report)
     assert candidates["notes.tmp"].verdict == SAFE
-    assert any("temporário" in e for e in candidates["notes.tmp"].evidences)
+    assert any("temporary" in e for e in candidates["notes.tmp"].evidences)
 
 
 def test_superseded_file_is_safe(projects_root):
@@ -188,7 +188,7 @@ def test_evidence_format_for_llm(projects_root):
 
     assert "old_x.py" in text
     assert "SAFE" in text
-    assert "nenhuma referência" in text
+    assert "no references" in text
     assert "mystery.py" in text
     assert "UNCERTAIN" in text
 
@@ -366,7 +366,7 @@ def test_cleanup_blocks_finish_when_recheck_fails(
         calls["n"] += 1
         if calls["n"] == 2:
             # revalidação após a remoção falha uma vez
-            return "check_project: FALHOU\nSTDOUT:\n(vazio)"
+            return "check_project: FAILED\nSTDOUT:\n(empty)"
         return real_check(project_name)
 
     runner._run_finish_check = _flaky_check

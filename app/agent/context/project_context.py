@@ -49,7 +49,7 @@ class ProjectContext:
 
         if not project_path.is_relative_to(projects_dir):
             raise PermissionError(
-                "Acesso fora do diretório de projetos não permitido."
+                "Access outside the projects directory is not allowed."
             )
 
         project_path.mkdir(parents=True, exist_ok=True)

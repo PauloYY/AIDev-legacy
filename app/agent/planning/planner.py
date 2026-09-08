@@ -162,41 +162,41 @@ class Planner:
 
         if response.tool_calls:
             raise ValueError(
-                "O Planner tentou executar ferramentas diretamente. "
-                "O Planner deve retornar somente um objeto JSON em texto."
+                "The Planner tried to execute tools directly. "
+                "The Planner must return only a JSON object as text."
             )
 
         if response.content is None:
             raise ValueError(
-                "O Planner não retornou conteúdo. "
-                "A resposta deve conter somente um objeto JSON em texto."
+                "The Planner returned no content. "
+                "The response must contain only a JSON object as text."
             )
 
         return self.parser.parse(response.content)
 
     # ---------- Fase 3 Etapa 2: short repair prompt ----------
 
-    # Marcadores (PT/EN) usados para escolher a dica direcionada. São
+    # Marcadores usados para escolher a dica direcionada. São
     # os mesmos textos que o validador/parser já emitem — nenhuma regra
     # nova, só classificação para montar o reparo mínimo.
-    _HINT_DEPENDENCY_ONLY = "só pode ser usada como dependency"
-    _HINT_UNKNOWN_TOOL = "Tool não encontrada"
-    _HINT_BAD_DEPENDENCY = "não pode ser usada como dependency"
+    _HINT_DEPENDENCY_ONLY = "can only be used as a dependency"
+    _HINT_UNKNOWN_TOOL = "Tool not found"
+    _HINT_BAD_DEPENDENCY = "cannot be used as a dependency"
     _HINT_SCHEMA = (
-        "required", "propriedade", "properties", "schema", "Schema",
-        "argumento", "additional",
+        "required", "property", "properties", "schema", "Schema",
+        "argument", "additional",
     )
     # Versão minúscula (inclui variações com maiúscula inicial, como
-    # "Argumento desconhecido ... Argumentos válidos", do schema).
+    # "Unknown argument ... Valid arguments", do schema).
     _HINT_SCHEMA_LOWER = (
-        "required", "propriedade", "properties", "schema", "argumento",
-        "argumentos", "obrigatóri", "válido", "desconhecido",
-        "additional", "tipo",
+        "required", "property", "properties", "schema", "argument",
+        "arguments", "missing", "unknown", "valid", "did you mean",
+        "additional", "type", "should be", "must be",
     )
-    _HINT_JSON = "JSON inválido"
-    _HINT_TOOL_CALLS = "executar ferramentas diretamente"
-    _HINT_NO_CONTENT = "não retornou conteúdo"
-    _HINT_BAD_ACTION = "Ação de decisão inválida"
+    _HINT_JSON = "invalid JSON"
+    _HINT_TOOL_CALLS = "execute tools directly"
+    _HINT_NO_CONTENT = "returned no content"
+    _HINT_BAD_ACTION = "Invalid decision action"
 
     MAX_REPAIR_PREVIOUS_CHARS = 1500
     MAX_REPAIR_ERROR_CHARS = 500

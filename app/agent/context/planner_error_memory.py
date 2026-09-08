@@ -40,14 +40,14 @@ class PlannerErrorMemory:
     def render(self) -> str:
         if not self._seen:
             return (
-                "ERROS PROIBIDOS (nenhum registrado ainda nesta run)."
+                "FORBIDDEN ERRORS (none recorded yet in this run)."
             )
 
         shown = self._seen[-self.MAX_ERRORS_RENDERED :]
 
         lines = [
-            "ERROS PROIBIDOS (você já cometeu estes erros antes nesta "
-            "run — NÃO os repita, sob nenhuma circunstância):",
+            "FORBIDDEN ERRORS (you already made these mistakes earlier "
+            "in this run — DO NOT repeat them, under any circumstances):",
         ]
         lines += [f"- {error}" for error in shown]
 
@@ -65,18 +65,18 @@ class PlannerErrorMemory:
         """Últimos N erros proibidos (Etapa 5). `render()` intacto."""
         if not self._seen:
             return (
-                "ERROS PROIBIDOS (nenhum registrado ainda nesta run)."
+                "FORBIDDEN ERRORS (none recorded yet in this run)."
             )
         count = limit or self.MAX_ERRORS_RENDERED_COMPACT
         shown = self._seen[-count:]
         omitted = len(self._seen) - len(shown)
         lines = [
-            "ERROS PROIBIDOS (você já cometeu estes erros antes nesta "
-            "run — NÃO os repita, sob nenhuma circunstância):",
+            "FORBIDDEN ERRORS (you already made these mistakes earlier "
+            "in this run — DO NOT repeat them, under any circumstances):",
         ]
         if omitted:
             lines.append(
-                f"... [+{omitted} erro(s) anterior(es) omitido(s)]"
+                f"... [+{omitted} earlier error(s) omitted]"
             )
         lines += [f"- {error}" for error in shown]
         return "\n".join(lines)

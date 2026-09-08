@@ -39,7 +39,7 @@ def _run(project_dir: Path, command: list[str], timeout: int):
             args=command,
             returncode=-1,
             stdout="",
-            stderr=f"TIMEOUT: excedeu {timeout}s.",
+            stderr=f"TIMEOUT: exceeded {timeout}s.",
         )
 
     except FileNotFoundError:
@@ -48,8 +48,8 @@ def _run(project_dir: Path, command: list[str], timeout: int):
             returncode=-1,
             stdout="",
             stderr=(
-                f"Comando '{command[0]}' não encontrado na imagem de "
-                "sandbox — instale a ferramenta ou pule esta checagem."
+                f"Command '{command[0]}' not found in the sandbox "
+                "image — install the tool or skip this check."
             ),
         )
 
@@ -67,12 +67,12 @@ def _iter_files(project_dir: Path, *suffixes: str):
 
 
 def _format(label: str, result: subprocess.CompletedProcess) -> str:
-    status = "OK" if result.returncode == 0 else "FALHOU"
+    status = "OK" if result.returncode == 0 else "FAILED"
 
     return (
         f"{label}: {status}\n"
-        f"STDOUT:\n{result.stdout.strip() or '(vazio)'}\n"
-        f"STDERR:\n{result.stderr.strip() or '(vazio)'}"
+        f"STDOUT:\n{result.stdout.strip() or '(empty)'}\n"
+        f"STDERR:\n{result.stderr.strip() or '(empty)'}"
     )
 
 
@@ -88,7 +88,7 @@ def _check_per_file(
     resultados num único relatório."""
 
     if not files:
-        return f"{label}: nenhum arquivo encontrado."
+        return f"{label}: no files found."
 
     failures = []
 
@@ -100,23 +100,23 @@ def _check_per_file(
             failures.append(f"{relative}:\n{result.stderr.strip()}")
 
     if failures:
-        return f"{label} — FALHOU em {len(failures)} arquivo(s):\n\n" + (
+        return f"{label} — FAILED in {len(failures)} file(s):\n\n" + (
             "\n\n".join(failures)
         )
 
     suffix = (
-        "\nAVISO: isso valida só sintaxe, NÃO confirma que imports/"
-        "requires apontam para módulos que existem de verdade."
+        "\nNOTE: this validates syntax only; it does NOT confirm that "
+        "imports/requires point to modules that really exist."
         if syntax_only
         else ""
     )
 
-    return f"{label}: {len(files)} arquivo(s) OK.{suffix}"
+    return f"{label}: {len(files)} file(s) OK.{suffix}"
 
 
 def _check_go(project_dir: Path, timeout: int) -> str:
     result = _run(project_dir, ["go", "vet", "./..."], timeout)
-    return _format("go vet ./... (Go — pega imports/tipos errados)", result)
+    return _format("go vet ./... (Go — catches wrong imports/types)", result)
 
 
 def _check_node(project_dir: Path, timeout: int) -> str:
@@ -125,7 +125,7 @@ def _check_node(project_dir: Path, timeout: int) -> str:
         timeout,
         list(_iter_files(project_dir, ".js")),
         lambda relative: ["node", "--check", relative],
-        "node --check (JS, apenas sintaxe)",
+        "node --check (JS, syntax only)",
         syntax_only=True,
     )
 
@@ -136,7 +136,7 @@ def _check_python(project_dir: Path, timeout: int) -> str:
         timeout,
         list(_iter_files(project_dir, ".py")),
         lambda relative: ["python3", "-m", "py_compile", relative],
-        "py_compile (Python, apenas sintaxe)",
+        "py_compile (Python, syntax only)",
         syntax_only=True,
     )
 
@@ -147,7 +147,7 @@ def _check_ruby(project_dir: Path, timeout: int) -> str:
         timeout,
         list(_iter_files(project_dir, ".rb")),
         lambda relative: ["ruby", "-c", relative],
-        "ruby -c (Ruby, apenas sintaxe)",
+        "ruby -c (Ruby, syntax only)",
         syntax_only=True,
     )
 
@@ -158,7 +158,7 @@ def _check_php(project_dir: Path, timeout: int) -> str:
         timeout,
         list(_iter_files(project_dir, ".php")),
         lambda relative: ["php", "-l", relative],
-        "php -l (PHP, apenas sintaxe)",
+        "php -l (PHP, syntax only)",
         syntax_only=True,
     )
 
@@ -171,7 +171,7 @@ def _check_c(project_dir: Path, timeout: int) -> str:
         lambda relative: [
             "gcc", "-fsyntax-only", "-Wall", "-Wextra", relative,
         ],
-        "gcc -fsyntax-only (C — pega #include errado)",
+        "gcc -fsyntax-only (C — catches wrong #include)",
         syntax_only=False,
     )
 
@@ -185,7 +185,7 @@ def _check_cpp(project_dir: Path, timeout: int) -> str:
             "g++", "-fsyntax-only", "-Wall", "-Wextra",
             "-std=c++17", relative,
         ],
-        "g++ -fsyntax-only (C++ — pega #include errado)",
+        "g++ -fsyntax-only (C++ — catches wrong #include)",
         syntax_only=False,
     )
 
@@ -194,7 +194,7 @@ def _check_java(project_dir: Path, timeout: int) -> str:
     java_files = list(_iter_files(project_dir, ".java"))
 
     if not java_files:
-        return "javac (Java): nenhum arquivo .java encontrado."
+        return "javac (Java): no .java files found."
 
     relatives = [
         str(path.relative_to(project_dir)) for path in java_files
@@ -211,8 +211,8 @@ def _check_java(project_dir: Path, timeout: int) -> str:
     )
 
     return _format(
-        f"javac (Java — {len(relatives)} arquivo(s), pega imports/"
-        "tipos errados)",
+        f"javac (Java — {len(relatives)} file(s), catches wrong "
+        "imports/types)",
         result,
     )
 
@@ -228,7 +228,7 @@ def _check_rust(project_dir: Path, timeout: int) -> str:
         timeout,
     )
     return _format(
-        "cargo check --offline (Rust — pega imports/tipos errados)",
+        "cargo check --offline (Rust — catches wrong imports/types)",
         result,
     )
 
@@ -251,12 +251,12 @@ def check_project(project_name: str) -> str:
 
     if not project_dir.is_relative_to(projects_dir):
         raise PermissionError(
-            "Acesso fora do diretório de projetos não permitido."
+            "Access outside the projects directory is not allowed."
         )
 
     if not project_dir.exists():
         raise FileNotFoundError(
-            f"Projeto não encontrado: {project_name}"
+            f"Project not found: {project_name}"
         )
 
     timeout = Config.execution_timeout_seconds
@@ -305,9 +305,9 @@ def check_project(project_name: str) -> str:
 
     if not reports:
         return (
-            "Nenhum tipo de projeto reconhecido (procurei manifestos "
-            "e extensões de Go, Node/JS, Python, Java, Rust, C, C++, "
-            "Ruby e PHP)."
+            "No recognized project type (looked for Go, Node/JS, "
+            "Python, Java, Rust, C, C++, Ruby and PHP manifests and "
+            "extensions)."
         )
 
     return "\n\n".join(reports)
@@ -318,26 +318,25 @@ definition = {
     "function": {
         "name": "check_project",
         "description": (
-            "Roda uma checagem estática (compilação/sintaxe) em TODOS "
-            "os arquivos do projeto de uma vez, detectando a "
-            "linguagem automaticamente (Go, Node/JS, Python, Java, "
-            "Rust, C, C++, Ruby, PHP). Diferente de rodar os testes, "
-            "isso cobre também arquivos que os testes atuais não "
-            "exercitam, então pega erros como imports/includes com "
-            "nome errado ou sintaxe quebrada em código ainda não "
-            "conectado ao resto do projeto. Em linguagens compiladas "
-            "(Go, Java, Rust, C, C++) isso pega import/include errado "
-            "de verdade; em linguagens dinâmicas (JS, Python, Ruby, "
-            "PHP) só garante sintaxe válida, não que os imports "
-            "resolvem. Use depois de escrever ou alterar vários "
-            "arquivos, antes de considerar uma etapa concluída."
+            "Runs a static check (compilation/syntax) on ALL project "
+            "files at once, auto-detecting the language (Go, Node/JS, "
+            "Python, Java, Rust, C, C++, Ruby, PHP). Unlike running "
+            "tests, this also covers files the current tests never "
+            "exercise, so it catches errors like misnamed "
+            "imports/includes or broken syntax in code not yet "
+            "connected to the rest of the project. In compiled "
+            "languages (Go, Java, Rust, C, C++) this really catches "
+            "wrong imports/includes; in dynamic languages (JS, Python, "
+            "Ruby, PHP) it only guarantees valid syntax, not that "
+            "imports resolve. Use after writing or changing several "
+            "files, before considering a step done."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Nome do projeto.",
+                    "description": "Project name.",
                 },
             },
             "required": [

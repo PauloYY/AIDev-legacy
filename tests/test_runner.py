@@ -304,10 +304,10 @@ def test_repeated_identical_planner_error_does_not_stop_early():
 
     # A partir da 2a vez que o erro aparece (3a chamada ao Planner
     # nesta run), a correção precisa ser a versão reforçada.
-    assert "ERRO REPETIDO" in planner.received_contexts[2]
-    assert "ERRO REPETIDO" in planner.received_contexts[3]
+    assert "REPEATED ERROR" in planner.received_contexts[2]
+    assert "REPEATED ERROR" in planner.received_contexts[3]
     # Na 1a vez, ainda é a correção genérica normal.
-    assert "CORREÇÃO DA TENTATIVA ANTERIOR" in planner.received_contexts[1]
+    assert "PREVIOUS ATTEMPT CORRECTION" in planner.received_contexts[1]
 
 
 def test_different_planner_errors_are_each_given_normal_retries():
@@ -350,7 +350,7 @@ def test_planner_error_memory_is_rendered_in_context():
     block = runner._build_memory_block("p", "resumo")
 
     assert "erro histórico" in block
-    assert "PROIBIDOS" in block
+    assert "FORBIDDEN" in block
 
 
 def test_investigation_allowed_via_periodic_budget_and_consumes_it():

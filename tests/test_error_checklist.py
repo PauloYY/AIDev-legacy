@@ -74,7 +74,7 @@ def test_generate_truncates_huge_input(checklist, llm):
     checklist.generate("npm test", huge_output)
 
     prompt_sent = llm.generate.call_args.kwargs["messages"][0].content
-    assert "truncado" in prompt_sent
+    assert "truncated" in prompt_sent
     assert len(prompt_sent) < len(huge_output)
 
 
@@ -123,5 +123,5 @@ def test_render_includes_command_context_marker(checklist, llm):
 
     rendered = checklist.render()
 
-    assert "CHECKLIST DE ERROS" in rendered
-    assert "some sozinho" in rendered
+    assert "CURRENT ERROR CHECKLIST" in rendered
+    assert "disappears on its own" in rendered

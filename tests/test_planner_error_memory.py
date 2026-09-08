@@ -4,7 +4,7 @@ from app.agent.context.planner_error_memory import PlannerErrorMemory
 def test_render_empty_by_default():
     memory = PlannerErrorMemory()
 
-    assert "nenhum registrado" in memory.render()
+    assert "none recorded yet" in memory.render()
 
 
 def test_seen_is_false_before_recording():
@@ -31,7 +31,7 @@ def test_render_lists_recorded_errors():
 
     assert "erro X" in rendered
     assert "erro Y" in rendered
-    assert "PROIBIDOS" in rendered
+    assert "FORBIDDEN" in rendered
 
 
 def test_record_does_not_duplicate():
@@ -52,7 +52,7 @@ def test_reset_clears_memory():
     memory.reset()
 
     assert memory.seen("erro X") is False
-    assert "nenhum registrado" in memory.render()
+    assert "none recorded yet" in memory.render()
 
 
 def test_render_truncates_to_most_recent():

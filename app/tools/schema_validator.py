@@ -42,8 +42,8 @@ class SchemaValidator:
     def validate(self, tool: Tool, arguments: dict[str, Any]) -> None:
         if not isinstance(arguments, dict):
             raise SchemaValidationError(
-                f"Os argumentos da tool '{tool.name}' devem ser um "
-                "objeto JSON (dict)."
+                f"Tool '{tool.name}' arguments must be a "
+                "JSON object (dict)."
             )
 
         schema = tool.definition.get("function", {}).get("parameters", {})
@@ -67,16 +67,16 @@ class SchemaValidator:
 
             suggestion = self._suggest(name, known_names)
             suggestion_text = (
-                f" Você quis dizer '{suggestion}'?"
+                f" Did you mean '{suggestion}'?"
                 if suggestion
                 else ""
             )
-            valid_list = ", ".join(known_names) if known_names else "(nenhum)"
+            valid_list = ", ".join(known_names) if known_names else "(none)"
 
             raise SchemaValidationError(
-                f"Argumento desconhecido '{name}' para a tool "
+                f"Unknown argument '{name}' for tool "
                 f"'{tool_name}'.{suggestion_text} "
-                f"Argumentos válidos: {valid_list}."
+                f"Valid arguments: {valid_list}."
             )
 
     def _check_required_arguments(
@@ -89,7 +89,7 @@ class SchemaValidator:
 
         if missing:
             raise SchemaValidationError(
-                f"Faltam argumentos obrigatórios para a tool "
+                f"Missing required arguments for tool "
                 f"'{tool_name}': {', '.join(missing)}."
             )
 
@@ -120,8 +120,8 @@ class SchemaValidator:
 
             if not valid:
                 raise SchemaValidationError(
-                    f"Argumento '{name}' da tool '{tool_name}' deveria "
-                    f"ser do tipo '{expected_type}', mas recebeu "
+                    f"Argument '{name}' of tool '{tool_name}' should "
+                    f"be of type '{expected_type}', but got "
                     f"{type(value).__name__} ({value!r})."
                 )
 

@@ -107,7 +107,7 @@ def _executor_errors(events):
 
 def _repetition_blocks(events):
     return [e for e in _executor_errors(events)
-            if "repetir uma operação" in e]
+            if "repeat an operation" in e]
 
 
 @pytest.fixture
@@ -319,20 +319,20 @@ def test_repeated_identical_fixes_trigger_stagnation(real_tools):
     runner = _real_runner(real_tools, decisions, executions)
     result, _ = _run_events(runner, objective="o", project_name="p")
     assert result == "done"
-    assert any("ESTAGNAÇÃO" in ctx
+    assert any("STAGNATION" in ctx
                for ctx in runner.planner.received_contexts)
 
 
 # _command_succeeded: só a primeira linha vale.
 def test_command_success_uses_first_line_only(real_tools):
     runner = _real_runner(real_tools, [], [])
-    ok_output = ("STATUS: sucesso (exit code 0)\n\nSTDOUT:\nhello\n\n"
-                 "STDERR:\n(vazio)")
+    ok_output = ("STATUS: success (exit code 0)\n\nSTDOUT:\nhello\n\n"
+                 "STDERR:\n(empty)")
     assert runner._command_succeeded("run_command", ok_output) is True
-    tricky = ("STATUS: falha (exit code 1)\n\nSTDOUT:\nSTATUS: sucesso\n\n"
-              "STDERR:\n(vazio)")
+    tricky = ("STATUS: failure (exit code 1)\n\nSTDOUT:\nSTATUS: success\n\n"
+              "STDERR:\n(empty)")
     assert runner._command_succeeded("run_command", tricky) is False
-    timeout = "TIMEOUT: a execução excedeu 15s e foi interrompida."
+    timeout = "TIMEOUT: execution exceeded 15s and was interrupted."
     assert runner._command_succeeded("run_command", timeout) is False
     assert runner._command_succeeded("write_file", "qualquer coisa") is True
 
@@ -345,19 +345,19 @@ def test_timeout_preserves_errors_and_blocks_finish(real_tools):
     # Fase 6: saída com falha parseável (evidência real p/ unificada).
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
-        "STATUS: falha (exit code 1)\nFAILED t.py::test_x\nboom",
+        "STATUS: failure (exit code 1)\nFAILED t.py::test_x\nboom",
         False, iteration=1)
     assert checklist.pending_count == 1
     calls_before = len(llm.calls)
 
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
-        "TIMEOUT: a execução excedeu 15s e foi interrompida.",
+        "TIMEOUT: execution exceeded 15s and was interrupted.",
         False, iteration=2)
     # generate NÃO foi chamado de novo; itens reais preservados.
     assert len(llm.calls) == calls_before
     assert checklist.pending_count == 2
-    assert any("tempo limite" in item.description
+    assert any("timed out" in item.description
                for item in checklist._items)
 
     # Timeout com checklist vazio ainda bloqueia.
@@ -365,14 +365,14 @@ def test_timeout_preserves_errors_and_blocks_finish(real_tools):
     runner2 = _real_runner(real_tools, [], [], error_checklist=fresh)
     runner2._update_error_checklist(
         "run_command", {"command": "pytest -q"},
-        "TIMEOUT: a execução excedeu 15s e foi interrompida.",
+        "TIMEOUT: execution exceeded 15s and was interrupted.",
         False, iteration=1)
     assert fresh.pending_count == 1
 
     # Sucesso limpa tudo, inclusive a nota de timeout.
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
-        "STATUS: sucesso (exit code 0)", True, iteration=3)
+        "STATUS: success (exit code 0)", True, iteration=3)
     assert checklist.pending_count == 0
 
 
@@ -383,10 +383,10 @@ def test_tool_exception_preserves_errors(real_tools):
     runner = _real_runner(real_tools, [], [], error_checklist=checklist)
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
-        "STATUS: falha (exit code 1)\nFAILED t.py::test_x\nboom", False)
+        "STATUS: failure (exit code 1)\nFAILED t.py::test_x\nboom", False)
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
-        "ERRO NA EXECUÇÃO DA TOOL:\nRuntimeError: sandbox explodiu",
+        "TOOL EXECUTION ERROR:\nRuntimeError: sandbox explodiu",
         False)
     assert checklist.pending_count == 2
 

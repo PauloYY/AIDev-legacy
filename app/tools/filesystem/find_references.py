@@ -20,17 +20,17 @@ def find_references(
 
     if not project_path.is_relative_to(projects_dir):
         raise PermissionError(
-            "Acesso fora do diretório de projetos não permitido."
+            "Access outside the projects directory is not allowed."
         )
 
     if not project_path.exists():
         raise FileNotFoundError(
-            f"Projeto não encontrado: {project_name}"
+            f"Project not found: {project_name}"
         )
 
     if not project_path.is_dir():
         raise NotADirectoryError(
-            f"O projeto não é um diretório: {project_name}"
+            f"Project is not a directory: {project_name}"
         )
 
     references = []
@@ -75,22 +75,22 @@ definition = {
     "function": {
         "name": "find_references",
         "description": (
-            "Procura referências a um símbolo em todos os arquivos "
-            "do projeto. Use esta ferramenta para descobrir onde "
-            "classes, funções, atributos ou métodos são utilizados "
-            "antes de alterar uma interface existente."
+            "Searches for references to a symbol in all project "
+            "files. Use this tool to find where classes, functions, "
+            "attributes or methods are used before changing an "
+            "existing interface."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "project_name": {
                     "type": "string",
-                    "description": "Nome do projeto.",
+                    "description": "Project name.",
                 },
                 "symbol": {
                     "type": "string",
                     "description": (
-                        "Nome do símbolo que deve ser procurado."
+                        "Name of the symbol to search for."
                     ),
                 },
             },
