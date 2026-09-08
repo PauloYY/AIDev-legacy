@@ -379,6 +379,7 @@ class OperationalMemory:
         não repete o conteúdo inteiro do que foi escrito.
 
         - write_file.content NUNCA aparece (vira "<omitted: N chars>").
+        - edit_file.old_text/new_text seguem a mesma regra.
         - Qualquer valor string maior que MAX_ARG_VALUE_CHARS é truncado
           com indicador "[+N chars]".
         - Valores não-string com repr muito longo são resumidos do mesmo
@@ -392,7 +393,9 @@ class OperationalMemory:
 
         compact: dict[str, Any] = {}
         for key, value in arguments.items():
-            if tool == "write_file" and key == "content":
+            if (tool == "write_file" and key == "content") or (
+                tool == "edit_file" and key in ("old_text", "new_text")
+            ):
                 if value is None:
                     compact[key] = "<empty>"
                 else:

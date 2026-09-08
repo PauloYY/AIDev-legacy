@@ -253,6 +253,7 @@ REGRAS:
         Mesma ideia da Etapa 2C (o prompt registra O QUE aconteceu, não
         repete o conteúdo escrito), ajustada a este prompt:
         - write_file.content NUNCA vai integral (vira "<omitted: N chars>").
+        - edit_file.old_text/new_text seguem a mesma regra.
         - strings maiores que MAX_ARG_VALUE_CHARS são truncadas com
           indicador de caracteres omitidos.
         - nunca muta o dict original (constrói um novo).
@@ -264,7 +265,9 @@ REGRAS:
 
         compact: dict[str, Any] = {}
         for key, value in arguments.items():
-            if tool == "write_file" and key == "content":
+            if (tool == "write_file" and key == "content") or (
+                tool == "edit_file" and key in ("old_text", "new_text")
+            ):
                 if value is None:
                     compact[key] = "<empty>"
                 else:

@@ -43,7 +43,11 @@ definition = {
     "type": "function",
     "function": {
         "name": "write_file",
-        "description": "Cria ou sobrescreve um arquivo dentro de um projeto.",
+        "description": (
+            "Cria um arquivo novo ou reconstrói o conteúdo de um "
+            "arquivo existente. Para mudanças pequenas e localizadas "
+            "num arquivo existente, prefira edit_file."
+        ),
         "parameters": {
             "type": "object",
             "properties": {

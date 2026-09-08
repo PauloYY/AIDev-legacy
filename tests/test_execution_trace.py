@@ -7,6 +7,8 @@ resiliência da escrita (nunca quebra a run).
 """
 
 import json
+import shlex
+import sys
 
 import pytest
 
@@ -190,18 +192,25 @@ def test_trace_records_executor_error(tmp_path):
 
 
 def _run_command_runner(tmp_path, trace, test_file_content):
-    """Runner com tools reais que roda `python3 -m pytest -q` de verdade."""
+    """Runner com tools reais que roda o pytest do projeto de verdade.
+
+    Usa `sys.executable` (o interpretador que executa a suíte, i.e. o
+    venv do projeto, onde o pytest está instalado) em vez de um
+    `python3` literal — que pode resolver para o Python do sistema,
+    sem pytest, e quebrar o teste por motivo ambiental.
+    """
     from app.agent.context.operational_memory import OperationalMemory
     from app.tools.registry import ToolRegistry
 
     project = "traceproj"
     write_file(project, "test_sample.py", test_file_content)
+    command = f"{shlex.quote(sys.executable)} -m pytest -q"
 
     tools = ToolRegistry()
     tools.load_defaults()
     task = Task(tool="run_command",
                 arguments={"project_name": project,
-                           "command": "python3 -m pytest -q"})
+                           "command": command})
     runner = Runner(
         planner=T.FakePlanner(
             [Decision(action=DecisionAction.TASK, task=task),

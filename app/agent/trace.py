@@ -84,6 +84,8 @@ def sanitize_arguments(tool: Any, arguments: Any) -> dict[str, Any]:
     """Representação segura dos argumentos de uma tool para o trace.
 
     - `write_file.content` nunca vai integral (vira "<omitted: N chars>").
+    - `edit_file.old_text`/`edit_file.new_text` seguem a mesma regra
+      (podem conter o arquivo quase inteiro).
     - Valores com cara de segredo (token, api_key, ...) viram "<redacted>".
     - Strings longas são truncadas; valores não-serializáveis viram str.
     - Nunca muta o dict original.
@@ -92,10 +94,16 @@ def sanitize_arguments(tool: Any, arguments: Any) -> dict[str, Any]:
     if not isinstance(arguments, dict):
         return {"_value": _truncate(arguments, MAX_ARG_VALUE_CHARS)}
 
+    _LARGE_TEXT_ARGS = {
+        ("write_file", "content"),
+        ("edit_file", "old_text"),
+        ("edit_file", "new_text"),
+    }
+
     compact: dict[str, Any] = {}
     for key, value in arguments.items():
         try:
-            if tool == "write_file" and key == "content":
+            if (tool, key) in _LARGE_TEXT_ARGS:
                 if value is None:
                     compact[key] = "<empty>"
                 else:

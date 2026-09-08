@@ -539,7 +539,7 @@ class Runner:
     def _attempt_files(self, tool: str, arguments: dict) -> list[str]:
         """Arquivos-alvo conhecidos da execução (p/ vínculo)."""
         try:
-            if tool == "write_file" and isinstance(arguments, dict):
+            if tool in ("write_file", "edit_file", "delete_file") and isinstance(arguments, dict):
                 path = arguments.get("file_path")
                 if isinstance(path, str) and path:
                     return [path]
@@ -1068,7 +1068,7 @@ class Runner:
         self._save_task_state("test_failure")
 
     def _is_mutating(self, tool: str, arguments: dict) -> bool:
-        if tool == "write_file":
+        if tool in ("write_file", "edit_file", "delete_file"):
             return True
 
         if tool == "run_command":
@@ -1089,7 +1089,8 @@ class Runner:
         veredito já vai ao Planner via resultado + finish gate) e
         run_command que nem muta (MUTATION_PATTERNS) nem é teste/build
         (ex.: --version, ls; sem sinal de teste para o resumo). Tudo o
-        que muda estado (write_file, run_command mutante, teste/build)
+        que muda estado (write_file, edit_file, delete_file,
+        run_command mutante, teste/build)
         atualiza normalmente. Nunca fabrica resumo: pular = manter o
         vigente.
         """
@@ -1533,6 +1534,188 @@ class Runner:
 
         self._last_final_verification_status = "ok"
         return None
+
+    def _run_unnecessary_files_cleanup(
+        self, project_name: str, iteration,
+    ) -> str | None:
+        """Remove arquivos claramente desnecessários antes do finish.
+
+        Dimensão "arquivos desnecessários" da verificação final:
+        análise determinística (sem LLM obrigatória) classifica
+        candidatos em SAFE / UNCERTAIN / KEEP. Apenas SAFE são
+        removidos via delete_file (que aplica suas próprias proteções);
+        UNCERTAIN permanecem. Após remover, revalida com check_project
+        (fresco, sem cache): se a remoção quebrou algo, bloqueia o
+        finish para correção. Uma única passada por finish (sem loops).
+
+        Retorna o relatório de erro se algo falhou, ou None se OK /
+        nada a fazer / detecção indisponível (nunca bloqueia por causa
+        da ferramenta de detecção em si).
+        """
+        from app.agent.context.unnecessary_files import (
+            MAX_SAFE_DELETIONS_PER_SCAN,
+        )
+
+        trace = self._trace_or_null()
+
+        try:
+            detect = getattr(
+                self.final_verification,
+                "detect_unnecessary_files", None,
+            )
+            if detect is None:
+                return None
+            report = detect(
+                project_name=project_name,
+                tools_execute=self.tools.execute,
+            )
+        except Exception as error:
+            logger.warning(
+                "Limpeza de arquivos desnecessários indisponível: %s",
+                error,
+            )
+            return None
+
+        try:
+            safe_paths = list(getattr(report, "safe_paths", []) or [])
+            files_scanned = int(getattr(report, "files_scanned", 0) or 0)
+            candidates = list(getattr(report, "candidates", []) or [])
+            uncertain_count = sum(
+                1 for c in candidates
+                if getattr(c, "verdict", "") == "uncertain"
+            )
+        except Exception:
+            return None
+
+        try:
+            trace.record(
+                "unnecessary_files_scan",
+                iteration=iteration,
+                files_scanned=files_scanned,
+                safe_paths=safe_paths[:MAX_SAFE_DELETIONS_PER_SCAN],
+                safe_count=len(safe_paths),
+                uncertain_count=uncertain_count,
+                candidates=[
+                    {
+                        "path": getattr(c, "path", "?"),
+                        "verdict": getattr(c, "verdict", "?"),
+                        "evidences": list(
+                            getattr(c, "evidences", []) or [])[:8],
+                    }
+                    for c in candidates
+                ][:30],
+            )
+        except Exception as error:
+            logger.warning("Trace do scan falhou: %s", error)
+
+        self._note_state_verification(
+            "unnecessary_files",
+            True,
+            (f"{files_scanned} files, {len(safe_paths)} safe, "
+             f"{uncertain_count} uncertain"),
+            iteration)
+
+        if not safe_paths:
+            return None
+
+        removed: list[str] = []
+        for file_path in safe_paths[:MAX_SAFE_DELETIONS_PER_SCAN]:
+            arguments = {
+                "project_name": project_name,
+                "file_path": file_path,
+            }
+            self._mark_correction_attempt(
+                iteration, "delete_file", arguments)
+            self._emit(
+                "tool_start", name="delete_file", arguments=arguments)
+            try:
+                result = self.tools.execute("delete_file", arguments)
+            except Exception as error:
+                result = (
+                    "ERRO NA EXECUÇÃO DA TOOL:\n"
+                    f"{type(error).__name__}: {error}"
+                )
+                succeeded = False
+                self._emit(
+                    "tool_error", name="delete_file",
+                    error=str(error))
+                self._mark_attempt_failed("delete_file", arguments)
+            else:
+                succeeded = self._command_succeeded(
+                    "delete_file", result)
+                self._emit(
+                    "tool_end", name="delete_file", success=succeeded)
+                if succeeded:
+                    removed.append(file_path)
+                    self._note_correction_applied(
+                        iteration, "delete_file", arguments)
+            try:
+                self.operational_memory.record(
+                    iteration=iteration,
+                    tool="delete_file",
+                    arguments=arguments,
+                    result=result,
+                    success=succeeded,
+                    dependency=False,
+                )
+            except Exception as error:
+                logger.warning("Memória da limpeza falhou: %s", error)
+            self._note_tool_execution("delete_file")
+            self._trace_tool_result(
+                iteration=iteration,
+                tool="delete_file",
+                arguments=arguments,
+                result=result,
+                success=succeeded,
+                dependency=False,
+            )
+            try:
+                state = getattr(self, "task_state", None)
+                if state is not None:
+                    state.record_progress(
+                        iteration, "delete_file", succeeded,
+                        file_path=file_path,
+                        note=("cleanup: arquivo desnecessário (SAFE) "
+                              "removido na verificação final"
+                              if succeeded else
+                              "cleanup: falha ao remover arquivo"),
+                    )
+                    self._save_task_state("cleanup")
+            except Exception as error:
+                logger.warning("TaskState da limpeza falhou: %s", error)
+            try:
+                trace.record(
+                    "unnecessary_file_removed" if succeeded
+                    else "unnecessary_file_remove_failed",
+                    iteration=iteration,
+                    file_path=file_path,
+                    success=succeeded,
+                )
+            except Exception as error:
+                logger.warning("Trace da limpeza falhou: %s", error)
+
+        if not removed:
+            return None
+
+        # Revalidação posterior: a remoção pode ter afetado o projeto.
+        # check_project fresco (o cache foi invalidado acima).
+        check_error = self._run_finish_check(project_name)
+        self._finish_check_cache = check_error
+        self._note_state_verification(
+            "unnecessary_files_recheck",
+            check_error is None,
+            str(check_error)[:200] if check_error else (
+                f"{len(removed)} arquivo(s) removido(s), "
+                "check_project OK"),
+            iteration)
+        trace.record(
+            "finish_gate",
+            iteration=iteration,
+            gate="unnecessary_files_recheck",
+            passed=check_error is None,
+            removed=removed,
+        )
+        return check_error
 
     def run(
         self,
@@ -2166,6 +2349,51 @@ class Runner:
                         ),
                         report_summary=sanitize_result(
                             final_check_error),
+                    )
+
+                    continue
+
+                cleanup_error = self._run_unnecessary_files_cleanup(
+                    project_name, iteration,
+                )
+
+                if cleanup_error:
+                    self._emit(
+                        "planner_error",
+                        error=(
+                            "O Planner tentou finalizar, mas a remoção "
+                            "de arquivos desnecessários quebrou a "
+                            "checagem do projeto."
+                        ),
+                    )
+
+                    context = self._append_context_error(
+                        context,
+                        f"ERRO DE VALIDAÇÃO ANTES DO FINISH:\n"
+                        "Você tentou finalizar e a verificação removeu "
+                        "arquivo(s) claramente desnecessário(s), mas a "
+                        "revalidação (check_project) após a remoção "
+                        "encontrou problemas que precisam ser corrigidos "
+                        "antes:\n\n"
+                        f"{self._truncate_for_planner(cleanup_error)}\n\n"
+                        "Corrija os problemas acima antes de tentar "
+                        "finalizar novamente.",
+                    )
+
+                    task_history.clear()
+                    stagnant_iterations = 0
+                    self._stats.finish_blocks += 1
+
+                    trace.record(
+                        "finish_block",
+                        iteration=iteration,
+                        gate="unnecessary_files_recheck",
+                        reason=(
+                            "revalidação falhou após remover arquivos "
+                            "desnecessários"
+                        ),
+                        report_summary=sanitize_result(
+                            cleanup_error),
                     )
 
                     continue

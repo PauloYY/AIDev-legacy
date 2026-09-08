@@ -38,6 +38,8 @@ def test_tools_context_contains_expected_tools(planner, tools):
         "list_files",
         "read_file",
         "write_file",
+        "edit_file",
+        "delete_file",
         "find_references",
         "run_command",
         "check_project",

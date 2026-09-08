@@ -464,13 +464,15 @@ RULES:
 
 - Return ONLY valid JSON.
 - Use only available tools. A task is a single action; dependencies gather info before it and use only analysis tools.
-- "read_file", "list_files", "find_references" cannot be a standalone task — they are investigation tools, only allowed inside "dependencies". If you need a file's content before editing it, attach read_file as a dependency of the write_file/run_command task; do not create a task just to read.
+- "read_file", "list_files", "find_references" cannot be a standalone task — they are investigation tools, only allowed inside "dependencies". If you need a file's content before editing it, attach read_file as a dependency of the write_file/edit_file/run_command task; do not create a task just to read.
 - EXCEPTION: after a failed "run_command" test/build, you MAY use read_file/list_files/find_references alone as the main task to investigate what broke (e.g. read the stack trace file) before knowing the fix. Outside this case, the rule above applies — do not chain multiple standalone investigations.
 - ANOTHER EXCEPTION: if your OBJECTIVE is to analyze/investigate an existing project (without creating or modifying code), mark the task with "investigation": true. This explicitly allows read_file/list_files/find_references as the main action. Example:
   {{"action": "task", "task": {{"tool": "read_file", "arguments": {{...}}, "investigation": true}}}}
   Without this field, the task will be rejected by the validator.
 - A task can have multiple dependencies — if you need to read multiple files before acting, attach them all at once instead of making separate tasks.
 - For large content arguments (e.g. "content" of write_file), do NOT write the final content here — briefly describe what should be done (e.g. "implement the Client class with fields id, name, and status"). The EXECUTOR generates the complete file content, so repeating it here wastes tokens and increases the risk of truncated responses.
+- For a small, localized change in an existing file, prefer "edit_file" (precise old_text → new_text, which must match exactly once) over rewriting the whole file with "write_file". Use "delete_file" only to remove a single file that is clearly unnecessary; never to remove directories or protected paths (.git, .aidev).
+- TOOL SELECTION POLICY (a preference, not a hard rule — prefer the most precise tool appropriate for the operation): new file → write_file; existing file + localized change → edit_file; existing file + substantial rewrite → write_file; clearly unnecessary file → delete_file.
 
 PROGRESS:
 
@@ -514,7 +516,7 @@ VALIDATION BEFORE FINISH:
 - If execution shows an error, exception, incorrect output, or unexpected behavior, this is NOT a reason for "finish" — create a task to fix the problem.
 - AFTER A TEST/EXECUTION FAILS, follow this reasoning before deciding the next action:
   1. Read the error message carefully: which file, function, or line does it point to? What is the likely cause (e.g. wrong name, incorrect type, inverted logic, missing import)?
-  2. If the message already clearly indicates what is wrong, fix it DIRECTLY with "write_file" (use "read_file" as a dependency of the fix task if you need to confirm the current content before editing — not as a separate task).
+  2. If the message already clearly indicates what is wrong, fix it DIRECTLY with "write_file" (or "edit_file" for a small localized fix — use "read_file" as a dependency of the fix task if you need to confirm the current content before editing — not as a separate task).
   3. Do NOT run the same test/command again without having changed any code — running again without changing anything always gives the same result and is not progress.
   4. After fixing, run the test again to confirm the problem is resolved.
 - For interactive programs (with input()), use the "stdin" argument of "run_command" to simulate user inputs and validate the main flows.
@@ -755,9 +757,11 @@ CURRENT CONTEXT:
 RULES:
 - Return ONLY valid JSON.
 - One task = one action; dependencies gather info first and use only analysis tools.
-- "read_file", "list_files", "find_references" are investigation tools: only inside "dependencies", never as standalone task. To edit a file, attach read_file as a dependency of the write_file/run_command task.
+- "read_file", "list_files", "find_references" are investigation tools: only inside "dependencies", never as standalone task. To edit a file, attach read_file as a dependency of the write_file/edit_file/run_command task.
 - EXCEPTION: after a failed "run_command" test/build you MAY use them alone to investigate the breakage. ANOTHER EXCEPTION: objective is pure analysis (no code changes) — then add "investigation": true to the task, e.g. {{"action": "task", "task": {{"tool": "read_file", "arguments": {{...}}, "investigation": true}}}} (rejected without it).
 - Attach all needed reads at once as multiple dependencies. For large args (write_file "content") describe briefly what to do — the EXECUTOR writes the full content.
+- Small localized change in an existing file? Prefer "edit_file" (exact old_text→new_text, single match) over a full "write_file". Remove a clearly unnecessary file only with "delete_file" (files only; never directories or .git/.aidev).
+- TOOL SELECTION POLICY (preference — the most precise tool wins): new file → write_file; existing + localized → edit_file; existing + substantial rewrite → write_file; clearly unnecessary file → delete_file.
 
 PROGRESS:
 - Consider everything already executed. Never repeat a completed task or the same tool+args without justification from new evidence.
@@ -776,7 +780,7 @@ PROJECT COHERENCE:
 VALIDATION BEFORE FINISH:
 - Writing code is not proof. Before "finish", run the program/tests/build with run_command (python main.py, python -m pytest -q, npm test/build, node app.js, gcc/go/cargo/ruby/php/mvn/gradle equivalents; Gradle: use "gradle", NEVER "./gradlew" — no network).
 - Node: create "package.json" BEFORE "npm install"/"npm test". Never run servers that do not terminate (npm start, flask run) — use "stdin" of run_command for interactive programs.
-- After a test/execution failure: read which file/line likely caused it; fix DIRECTLY with write_file (read_file as dependency if needed); NEVER re-run the same command unchanged; re-run after fixing to confirm. Only "finish" after real execution proves the objective.
+- After a test/execution failure: read which file/line likely caused it; fix DIRECTLY with write_file (or edit_file for a small localized fix; read_file as dependency if needed); NEVER re-run the same command unchanged; re-run after fixing to confirm. Only "finish" after real execution proves the objective.
 
 TOOLS AVAILABLE:
 

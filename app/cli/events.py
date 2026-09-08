@@ -69,6 +69,18 @@ def handle_agent_event(event: AgentEvent):
                 f"write_file → {file_path}"
             )
 
+        elif name == "edit_file":
+            file_path = arguments.get("file_path")
+            print(
+                f"edit_file → {file_path}"
+            )
+
+        elif name == "delete_file":
+            file_path = arguments.get("file_path")
+            print(
+                f"delete_file → {file_path}"
+            )
+
         elif name == "find_references":
             symbol = arguments.get("symbol")
             print(

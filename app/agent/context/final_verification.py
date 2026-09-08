@@ -281,6 +281,25 @@ class FinalVerification:
 
         return content, file_symbols
 
+    def detect_unnecessary_files(
+        self,
+        project_name: str,
+        tools_execute,
+    ):
+        """Detecta arquivos potencialmente desnecessários (determinístico).
+
+        Dimensão "arquivos desnecessários" da verificação final:
+        coleta evidências (referências/imports/configuração/
+        entrypoints/testes) e classifica cada candidato como
+        SAFE / UNCERTAIN / KEEP, de forma conservadora. Não chama a
+        LLM e nunca levanta (falha => relatório vazio).
+        """
+        from app.agent.context.unnecessary_files import (
+            analyze_unnecessary_files,
+        )
+
+        return analyze_unnecessary_files(project_name, tools_execute)
+
     def _build_prompt(
         self,
         objective: str,
