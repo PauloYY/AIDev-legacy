@@ -51,7 +51,6 @@ def test_tools_context_cached_on_repeated_calls(planner):
     context1 = planner._build_tools_context()
     context2 = planner._build_tools_context()
 
-    # Same object returned from cache
     assert context1 is context2
 
 
@@ -97,7 +96,6 @@ def test_tools_context_invalidated_when_tool_removed(tools):
     context1 = planner._build_tools_context()
     initial_count = len(json.loads(context1))
 
-    # Remove a tool by unregistering (internally via _tools.pop)
     if "list_symbols" in tools._tools:
         del tools._tools["list_symbols"]
 
@@ -137,7 +135,5 @@ def test_tools_context_uses_sorted_keys_for_stable_cache(tools):
     context1 = planner._build_tools_context()
     context2 = planner._build_tools_context()
 
-    # Even though internal dict order may vary, the cached names
-    # should be sorted so repeated calls always match
     assert context1 == context2
     assert planner._cached_tools_names == tuple(sorted(tools._tools.keys()))

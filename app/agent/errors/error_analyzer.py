@@ -1,32 +1,17 @@
-"""Fase 5 — Error Analyzer: resultado bruto → problemas estruturados.
-
-Regras:
-- UMA chamada LLM por resultado com falhas (nunca por erro individual).
-- Só para comando de teste/verificação com falha (o chamador filtra;
-  aqui há guarda defensiva extra).
-- Distingue erro observado / causa provável / solução sugerida; sem
-  evidência: probable_cause="unknown", suggested_solution="investigate".
-- Anti-invenção: affected_files só com grounding no output; ids e
-  contagens validados; qualquer falha → fallback determinístico
-  (parse de FAILED/ERROR + referências de arquivo) ou lista vazia.
-- Nunca levanta.
-"""
+"""Error Analyzer: resultado bruto → problemas estruturados."""
 
 import json
 import re
 from dataclasses import dataclass, field
 
-# Linhas que indicam falha de teste (1ª passada determinística).
 _FAILURE_LINE_RE = re.compile(
     r"^\s*(FAILED|ERROR|FAIL:|FAILED:|Error)\b(.*)$",
     re.IGNORECASE,
 )
-# Referências a arquivos com linha (tracebacks, pytest short summary).
 _FILE_REF_RE = re.compile(
     r"([\w\-./\\]+\.(?:py|js|jsx|ts|tsx|go|java|rb|php|c|cc|cpp|h|rs))"
     r"(?::(\d+))?",
 )
-# test_id tipo pytest: path::test (com ou sem linha).
 _TEST_ID_RE = re.compile(
     r"([\w\-./\\]+\.(?:py|js|jsx|ts|tsx|go))\s*::\s*([\w\-]+)",
 )
@@ -161,7 +146,6 @@ class ErrorAnalysis:
     llm_calls: int = 0
     fallback_used: bool = False
     error: str | None = None
-    # --- Fase 6: fatos determinísticos (sempre preenchidos) ---
     failures: list[FailureFact] = field(default_factory=list)
     exit_code: int | None = None
 
@@ -212,7 +196,6 @@ class ErrorAnalyzer:
         except Exception:
             result_text = ""
         analysis = ErrorAnalysis(command=command_text[:200])
-        # Fase 6: fatos determinísticos sempre (código, não LLM).
         try:
             analysis.failures = extract_failure_facts(result_text)
             from app.agent.trace import parse_exit_code
@@ -220,13 +203,10 @@ class ErrorAnalyzer:
             analysis.exit_code = parse_exit_code(result_text)
         except Exception:
             pass
-        # Guarda defensiva: sem falha aparente, nada a analisar.
         if "exit code 0" in result_text.split("\n", 1)[0]:
             return analysis
         if self.llm is None:
             return self._fallback(analysis, result_text)
-        # Conta a tentativa mesmo se falhar (métrica honesta: 1 call
-        # feita, sem retry em loop — o fallback não chama LLM).
         analysis.llm_calls = 1
         try:
             content = self._generate(result_text, command_text,
@@ -374,10 +354,10 @@ def checklist_description(test: str, error: str) -> str:
 
 
 class UnifiedErrorAnalyzer:
-    """Orquestra UMA análise → TaskState + Checklist + Planner + Executor.
+    """Orquestra UMA análise para TaskState, Checklist, Planner e Executor.
 
-    Fase 6: compõe extração determinística (fatos) + UM ErrorAnalyzer
-    (hipóteses, 1 LLM call max). Não é um terceiro analisador — reusa
+    Compõe extração determinística (fatos) + UM ErrorAnalyzer
+    (hipóteses, 1 LLM call max). Não é um terceiro analisador - reusa
     ErrorAnalyzer; o ganho é UMA chamada alimentando N consumidores.
     Nunca levanta.
     """
@@ -411,7 +391,6 @@ class UnifiedErrorAnalyzer:
             unified.exit_code = parse_exit_code(result_text)
         except Exception:
             pass
-        # Guarda defensiva: sem falha aparente, só fatos (vazios).
         if "exit code 0" in result_text.split("\n", 1)[0]:
             return unified
         try:
@@ -429,8 +408,6 @@ class UnifiedErrorAnalyzer:
             unified.llm_calls = analysis.llm_calls
             unified.fallback_used = analysis.fallback_used
             unified.error = analysis.error
-        # Projeção do checklist (determinística, sem segunda análise):
-        # hipóteses primeiro; fatos quando só eles existirem.
         items: list[str] = []
         try:
             for problem in unified.problems[:self.max_problems]:

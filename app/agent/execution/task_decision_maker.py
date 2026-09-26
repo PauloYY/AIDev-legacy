@@ -23,10 +23,6 @@ class TaskDecisionMaker:
         context: str,
         iteration: int | None = None,
     ) -> ExecutionDecision:
-        # Etapa 6: o Executor NÃO é bypassado (1 chamada LLM por
-        # execução + retries, como antes). Só o prompt encolhe quando
-        # AIDEV_COMPACT_EXECUTOR=1; a decisão do Planner (tool, args,
-        # dependencies, ordem, arquivos) vai integral nos dois modos.
         from app.config import Config
 
         if bool(getattr(Config, "compact_executor", False)):
@@ -111,7 +107,7 @@ Return ONLY the JSON.
     def _build_prompt_compact(
         objective: str, task: Task, context: str
     ) -> str:
-        """Prompt compacto do Executor (Etapa 6, semântico, sem corte).
+        """Prompt compacto do Executor (semântico, sem corte).
 
         Mantém integralmente: objetivo, decisão do Planner (tool,
         argumentos completos, dependencies via contexto), restrições

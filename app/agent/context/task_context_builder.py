@@ -5,19 +5,8 @@ from app.agent.execution.task import Task
 
 
 class TaskContextBuilder:
-    # Etapa 4: teto por resultado de dependency no contexto do Executor.
-    # Mesma família do Runner.MAX_CONTEXT_CHARS (4000): o Executor já
-    # recebe vereditos "verdict-first" (STATUS na 1ª linha do
-    # run_command) e detalhes de falha também via error checklist
-    # (gerado do resultado INTEGRAL, separadamente). Preserva o início
-    # e marca a omissão — nunca trunca silenciosamente.
     DEFAULT_MAX_RESULT_CHARS = 4000
 
-    # Etapa 6: teto compacto por resultado (só quando AIDEV_COMPACT_
-    # EXECUTOR=1 E já havia um limite configurado). Arquivos pequenos
-    # (o caso comum: < 2000 chars) passam byte-idênticos; só outputs
-    # grandes encolhem, com o total omitido marcado. None (integral
-    # explícito) continua integral — limite explícito não é adivinhado.
     COMPACT_MAX_RESULT_CHARS = 2000
 
     def __init__(self, max_result_chars: int | None = None):
@@ -63,7 +52,7 @@ class TaskContextBuilder:
         return "\n".join(context)
 
     def _effective_limit(self) -> int | None:
-        """Limite vigente p/ UM resultado (Etapas 4+6)."""
+        """Limite vigente p/ UM resultado."""
         limit = self.max_result_chars
         if limit is None:
             return None
@@ -77,7 +66,7 @@ class TaskContextBuilder:
         return limit
 
     def _format_result(self, result: Any) -> str:
-        """Representação limitada de UM resultado (Etapas 4+6).
+        """Representação limitada de UM resultado.
 
         Sem limite configurado (None): comportamento legado integral.
         Com limite: preserva o início (veredito STATUS, STDOUT inicial)

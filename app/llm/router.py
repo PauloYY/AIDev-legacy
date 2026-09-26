@@ -144,7 +144,7 @@ class LLMRouter(LLMProvider):
         messages: list[Message],
         tools: list[dict] | None = None,
     ) -> LLMResponse:
-        """Roteamento assíncrono (Etapa 3): espelho do `generate`.
+        """Roteamento assíncrono: espelho do `generate`.
 
         Mesmas regras de fallback/espera, com `asyncio.sleep` em vez
         de `time.sleep`. Chama `generate_async` dos providers (o

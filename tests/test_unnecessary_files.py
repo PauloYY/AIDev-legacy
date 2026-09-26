@@ -65,8 +65,6 @@ def test_superseded_file_is_safe(projects_root):
 
     candidates = _by_path(report)
     assert candidates["old_service.py"].verdict == SAFE
-    # service.py não tem referências, mas também não tem sinal positivo
-    # de inutilidade => UNCERTAIN (conservador), nunca SAFE.
     assert candidates["service.py"].verdict == UNCERTAIN
     assert report.safe_paths == ["old_service.py"]
 
@@ -124,7 +122,6 @@ def test_duplicate_of_kept_file_is_safe(projects_root):
     })
 
     candidates = _by_path(report)
-    # svc_copy_tmp.py is an exact duplicate of the needed svc.py
     assert candidates["svc_copy_tmp.py"].verdict == SAFE
 
 
@@ -197,9 +194,6 @@ def test_verdict_constants():
     assert (SAFE, UNCERTAIN, KEEP) == ("safe", "uncertain", "keep")
 
 
-# --- Registry / parallel-batch exclusion -------------------------------
-
-
 def test_new_tools_are_mutative_not_parallel():
     from app.agent.parallel import PURE_READ_TOOLS, all_pure_read
     from app.tools.registry import ToolRegistry
@@ -214,7 +208,6 @@ def test_new_tools_are_mutative_not_parallel():
     assert all_pure_read(["read_file", "edit_file"]) is False
     assert all_pure_read(["delete_file"]) is False
     assert all_pure_read(["read_file", "delete_file"]) is False
-    # read-only batches still work
     assert all_pure_read(["read_file", "list_files"]) is True
 
 
@@ -233,9 +226,6 @@ def test_final_verification_exposes_detector(projects_root):
     report = verification.detect_unnecessary_files("proj", registry.execute)
 
     assert report.safe_paths == ["junk.tmp"]
-
-
-# --- Cleanup integration (Runner finish flow) ---------------------------
 
 
 def _cleanup_runner(tools, decisions, final_verification, trace):
@@ -298,7 +288,6 @@ def test_cleanup_removes_only_safe_on_finish(projects_root, tmp_path):
 
     assert runner.run(objective="obj", project_name="proj") == "done"
 
-    # SAFE removido; UNCERTAIN e entrypoint preservados.
     assert not (projects_root / "proj" / "tmp_helper.py").exists()
     assert (projects_root / "proj" / "mystery.py").exists()
     assert (projects_root / "proj" / "main.py").exists()
@@ -365,7 +354,6 @@ def test_cleanup_blocks_finish_when_recheck_fails(
     def _flaky_check(project_name):
         calls["n"] += 1
         if calls["n"] == 2:
-            # revalidação após a remoção falha uma vez
             return "check_project: FAILED\nSTDOUT:\n(empty)"
         return real_check(project_name)
 
@@ -377,5 +365,4 @@ def test_cleanup_blocks_finish_when_recheck_fails(
     blocks = [e for e in events if e["event"] == "finish_block"]
     assert any(e.get("gate") == "unnecessary_files_recheck"
                for e in blocks)
-    # Sem loop infinito: segundo finish conclui.
     assert runner._stats.finish_blocks == 1

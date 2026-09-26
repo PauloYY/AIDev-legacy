@@ -96,10 +96,6 @@ def _ensure_network(name: str) -> None:
     if _network_exists(name):
         return
 
-    # --internal: containers dessa rede não têm rota nenhuma pra fora.
-    # É essa flag que garante que o sandbox só alcança a internet
-    # através do proxy (que fica também numa segunda rede, com rota
-    # externa de verdade — ver _ensure_proxy_container).
     subprocess.run(
         ["docker", "network", "create", "--internal", name],
         capture_output=True,
@@ -126,8 +122,6 @@ def _ensure_proxy_container(
     if _proxy_container_running(container_name):
         return
 
-    # Remove um container parado com o mesmo nome (ex.: de uma run
-    # anterior que não finalizou limpo) antes de recriar.
     subprocess.run(
         ["docker", "rm", "-f", container_name],
         capture_output=True,
@@ -147,11 +141,6 @@ def _ensure_proxy_container(
         check=True,
     )
 
-    # A rede acima é --internal (sem saída pra internet). O proxy
-    # precisa de uma segunda rede com rota externa de verdade pra
-    # conseguir encaminhar as requisições liberadas pelos domínios da
-    # allowlist — por isso conectamos a bridge padrão do Docker aqui,
-    # só no container do proxy, nunca nos containers do sandbox.
     subprocess.run(
         ["docker", "network", "connect", "bridge", container_name],
         capture_output=True,
@@ -273,8 +262,6 @@ def run_sandboxed(
         )
 
     except subprocess.TimeoutExpired:
-        # Garante que o container não continue rodando em segundo plano
-        # mesmo depois do processo cliente do docker ter sido encerrado.
         subprocess.run(
             ["docker", "kill", container_name],
             capture_output=True,

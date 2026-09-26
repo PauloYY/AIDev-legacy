@@ -1,11 +1,4 @@
-"""Etapa 3 — execução assíncrona e paralelização segura.
-
-Cobre os 12 casos exigidos sem alterar nenhum teste antigo:
-async do LLM, propagação de erros, request_type normal/short_repair,
-paralelismo de independentes, sequencialidade de dependentes,
-proteção contra escrita simultânea, falha em batch, timeout,
-tools síncronas, caminho síncrono e não-regressão do Short Repair.
-"""
+"""Execução assíncrona e paralelização segura."""
 
 import asyncio
 import time
@@ -33,8 +26,6 @@ from app.llm.providers.base import LLMProvider
 from app.llm.providers.openai_compatible import OpenAICompatibleProvider
 from app.llm.router import LLMRouter
 
-
-# --- doubles ---------------------------------------------------------------
 
 class ScriptedAsyncProvider(LLMProvider):
     """Provider com generate_async real (sleep simulando I/O)."""
@@ -83,8 +74,6 @@ class SyncOnlyProvider(LLMProvider):
 def _msg(text="oi"):
     return [Message(role="user", content=text)]
 
-
-# 1. chamada async do LLM funciona --------------------------------------------
 
 def test_generate_async_returns_response_and_tracks_usage():
     client = LLMClient(ScriptedAsyncProvider(delay=0.05))
@@ -139,8 +128,6 @@ def test_base_default_runs_sync_provider_in_thread():
     assert wall < 0.5, f"to_thread deveria paralelizar, levou {wall:.2f}s"
 
 
-# 2. erros continuam propagados + registrados ----------------------------------
-
 def test_generate_async_error_propagates_and_records():
     client = LLMClient(
         ScriptedAsyncProvider(fail_with=LLMAPIError("boom", status_code=500))
@@ -159,8 +146,6 @@ def test_router_async_falls_back_to_next_provider():
     calls = []
     bad = ScriptedAsyncProvider(
         fail_with=LLMAPIError("x", status_code=500), calls=calls)
-    # 500 sem flag transitória? Router só faz fallback p/ transitório;
-    # usa erro de conexão (sempre transitório) no primeiro.
     from app.exceptions import LLMConnectionError as ConnErr
     flaky = ScriptedAsyncProvider(fail_with=ConnErr("caiu"), calls=calls)
     good = ScriptedAsyncProvider(calls=calls)
@@ -172,8 +157,6 @@ def test_router_async_falls_back_to_next_provider():
     assert len(calls) == 2
 
 
-# 3/4. request_type preservado --------------------------------------------------
-
 def test_generate_async_preserves_request_types():
     for request_type in ("normal", "short_repair", "full_retry"):
         client = LLMClient(ScriptedAsyncProvider(delay=0.01))
@@ -184,8 +167,6 @@ def test_generate_async_preserves_request_types():
     stats = client.usage.planner_request_stats()
     assert stats["full_retry"]["calls"] == 1
 
-
-# 5. independentes em paralelo (ordenado) ---------------------------------------
 
 def test_run_concurrent_is_parallel_and_ordered():
     def _slow(i):
@@ -216,8 +197,6 @@ def test_pure_set_only_contains_reads():
     assert not all_pure_read([])
 
 
-# 6. dependentes continuam sequenciais --------------------------------------------
-
 def test_mixed_dependencies_stay_sequential(tmp_path, monkeypatch):
     from app.agent.context.operational_memory import OperationalMemory
     from app.agent.planning.decision import Decision, DecisionAction
@@ -231,7 +210,6 @@ def test_mixed_dependencies_stay_sequential(tmp_path, monkeypatch):
 
     tools = ToolRegistry()
     tools.load_defaults()
-    # run_command como dependency torna o batch impuro → sequencial.
     task = Task(
         tool="write_file",
         arguments={"project_name": "p", "file_path": "b.py",
@@ -344,7 +322,6 @@ def test_pure_dependencies_run_in_parallel_batch(projects_root, tmp_path):
     assert len(batches) == 1
     assert batches[0]["size"] == 2
     assert batches[0]["context"] == "dependencies"
-    # Ordem determinística preservada no contexto da task.
     seen = runner.planner.received_contexts
     assert seen, "FakePlanner deveria ter recebido contextos"
 
@@ -406,15 +383,11 @@ def test_parallel_disabled_by_config_falls_back_to_sequential(
     assert runner._stats.sequential_ops == 2
 
 
-# 7. escritas nunca simultâneas -----------------------------------------------------
-
 def test_writes_are_never_parallel_candidates():
     assert not is_pure_read_tool("write_file")
     assert not all_pure_read(["write_file", "write_file"])
     assert not all_pure_read(["read_file", "write_file"])
 
-
-# 8. falha em batch não cancela os demais ----------------------------------------------
 
 def test_parallel_failure_isolated_and_ordered():
     def _ok():
@@ -489,8 +462,6 @@ def test_runner_continues_when_parallel_dependency_fails(
     assert [e["success"] for e in tool_results] == [True, False]
 
 
-# 9. timeout continua funcionando ----------------------------------------------------------
-
 def test_run_command_timeout_preserved(projects_root):
     from app.tools.registry import ToolRegistry
     from app.tools.filesystem.write_file import write_file
@@ -535,8 +506,6 @@ def test_async_provider_connection_error_maps(monkeypatch):
         asyncio.run(provider.generate_async(messages=[]))
 
 
-# 10/11. tools e caminho síncrono intactos ------------------------------------------------------
-
 def test_sync_generate_still_works_after_async_use(monkeypatch):
     from tests.test_openai_compatible_provider import FakeResponse
 
@@ -557,8 +526,6 @@ def test_sync_generate_still_works_after_async_use(monkeypatch):
     client = LLMClient(provider)
     asyncio.run(client.generate_async(
         _msg(), component="Planner")) if False else None
-    # sync usa httpx.post (mockado); async usaria AsyncClient (real) —
-    # aqui valida-se que o sync continua parseando igual após o refactor.
     response = client.generate(_msg(), component="Planner")
     assert response.content == "sync-ok"
     assert client.usage.total.total_tokens == 2
@@ -576,8 +543,6 @@ def test_sync_post_uses_shared_request_builder():
     headers2, payload2 = provider._build_request(_msg("x"), None)
     assert "tools" not in payload2
 
-
-# 12. Short Repair não regrediu ---------------------------------------------------------------
 
 def test_short_repair_still_used_with_parallel_enabled(
         projects_root, tmp_path):

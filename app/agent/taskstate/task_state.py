@@ -1,20 +1,8 @@
-"""Fase 4 — TaskState: representação estruturada e persistente da tarefa.
-
-Proveniência (nunca misturar):
-- "user":       texto/span verbatim do prompt original do usuário.
-- "canonical":  texto da versão canônica em inglês (tradução fiel).
-- "interpreted": estrutura extraída deterministicamente do canônico
-  (requisitos/restrições/ambiguidades detectáveis — sem invenção).
-- "observed":   fato visto durante a execução (decisão, resultado,
-  arquivo tocado, exit code).
-- "verified":   fato confirmado por execução real (teste verde, gates
-  de finish). Nada é "verified" por decisão do Planner.
-"""
+"""TaskState: representação estruturada e persistente da tarefa."""
 
 from dataclasses import asdict, dataclass, field
 
 
-# Origens válidas (documentação executável; métodos validam).
 ORIGINS = ("user", "canonical", "interpreted", "observed", "verified")
 
 
@@ -44,7 +32,6 @@ class Requirement:
 
     text: str
     origin: str = "interpreted"
-    # id estável dentro da run ("R1", "R2", ...).
     req_id: str = ""
 
 
@@ -66,7 +53,6 @@ class Ambiguity:
     origin: str = "interpreted"
 
 
-# Status de item de plano (ciclo de vida; ver TaskState.sync_plan).
 PLAN_STATUS_PENDING = "pending"
 PLAN_STATUS_IN_PROGRESS = "in_progress"
 PLAN_STATUS_COMPLETED = "completed"
@@ -90,8 +76,6 @@ class PlanItem:
 
     index: int
     done: bool = False
-    # Referência curta (ex.: "checklist #2"); a descrição canônica
-    # continua no ProjectChecklist.
     ref: str = ""
     status: str = PLAN_STATUS_PENDING
     item_id: str = ""
@@ -121,8 +105,6 @@ class ProgressEntry:
     origin: str = "observed"
 
 
-# Status de problema (Fase 5). `resolved` (bool legado) espelha
-# status == resolved; `open` p/ gate = pending/in_progress/blocked.
 PROBLEM_STATUS_PENDING = "pending"
 PROBLEM_STATUS_IN_PROGRESS = "in_progress"
 PROBLEM_STATUS_PENDING_VERIFICATION = "pending_verification"
@@ -137,7 +119,6 @@ PROBLEM_STATUSES = (
     PROBLEM_STATUS_BLOCKED,
     PROBLEM_STATUS_INVALIDATED,
 )
-# Gate de retest: bloqueia enquanto houver algum destes.
 BLOCKING_PROBLEM_STATUSES = frozenset({
     PROBLEM_STATUS_PENDING,
     PROBLEM_STATUS_IN_PROGRESS,
@@ -147,9 +128,9 @@ BLOCKING_PROBLEM_STATUSES = frozenset({
 
 @dataclass
 class Problem:
-    """Problema estruturado (Fase 5: hipótese do Analyzer + estado).
+    """Problema estruturado (hipótese do Analyzer + estado).
 
-    `description` resume o erro (compat Fase 4); `error` é a linha
+    `description` resume o erro (compat); `error` é a linha
     observada; causa/solução são HIPÓTESES ("unknown"/"investigate"
     quando sem evidência). `test` = identificador do teste p/ dedup
     conservadora. `resolved` espelha status == resolved.
@@ -160,7 +141,6 @@ class Problem:
     iteration: int | None = None
     resolved: bool = False
     origin: str = "observed"
-    # --- Fase 5 (defaults seguros; ditados antigos carregam) ---
     problem_id: str = ""
     source: str = ""
     error: str = ""
@@ -180,7 +160,6 @@ class Problem:
         try:
             if self.status not in PROBLEM_STATUSES:
                 self.status = PROBLEM_STATUS_PENDING
-            # Compat nos dois sentidos.
             if self.status == PROBLEM_STATUS_RESOLVED:
                 self.resolved = True
             elif self.resolved and self.status == PROBLEM_STATUS_PENDING:
@@ -201,7 +180,6 @@ class Correction:
     description: str
     iteration: int | None = None
     origin: str = "observed"
-    # --- Fase 5 (defaults seguros) ---
     correction_id: str = ""
     problem_id: str = ""
     problem_ids: list[str] = field(default_factory=list)
@@ -241,7 +219,7 @@ class VerificationRecord:
 
 @dataclass
 class TaskState:
-    """Estado estruturado da tarefa (Fase 4).
+    """Estado estruturado da tarefa.
 
     Campos de entrada (prompt → canonical → interpreter) são escritos
     uma vez na construção; campos de execução evoluem via métodos
@@ -249,13 +227,10 @@ class TaskState:
     são defensivos: nunca levantam por entrada ruim.
     """
 
-    # --- entrada (escritos uma vez) ---
     original_prompt: str = ""
     canonical_prompt: str = ""
     language: str = "unknown"
     translation_applied: bool = False
-    # task_id: sha1 do canonical_prompt (recuperação segura: mesma
-    # tarefa → pode recuperar; tarefa diferente → estado novo).
     task_id: str = ""
     objective: str = ""
     requirements: list[Requirement] = field(default_factory=list)
@@ -263,18 +238,15 @@ class TaskState:
     ambiguities: list[Ambiguity] = field(default_factory=list)
     plan: list[PlanItem] = field(default_factory=list)
 
-    # --- execução (evoluem via record_*) ---
     decisions: list[DecisionRecord] = field(default_factory=list)
     progress: list[ProgressEntry] = field(default_factory=list)
     problems: list[Problem] = field(default_factory=list)
     corrections: list[Correction] = field(default_factory=list)
     verification: list[VerificationRecord] = field(default_factory=list)
 
-    # Tetos da renderização compacta (só representação, não os dados).
     MAX_ITEMS_PER_SECTION = 10
     MAX_TEXT_CHARS = 200
 
-    # ----- atualizações centralizadas (Runner chama estes) -----
 
     def record_decision(
         self,
@@ -369,7 +341,6 @@ class TaskState:
             pass
         return resolved
 
-    # ----- Fase 5: ciclo de correção (métodos centralizados) -----
 
     @staticmethod
     def _problem_key(source: str, test: str,
@@ -440,7 +411,6 @@ class TaskState:
                         p for p in self.problems
                         if p.status in tracked_statuses
                     ]
-                    # Re-evidência exata → mantém (reabre se aguardava).
                     exact = [p for p in tracked
                              if self._problem_key(
                                  p.source, p.test, p.error) == key]
@@ -451,8 +421,6 @@ class TaskState:
                                 problem.status = PROBLEM_STATUS_PENDING
                                 problem.correction_id = ""
                         continue
-                    # Mesmo teste (identificado), erro diferente →
-                    # diagnóstico antigo não vale mais.
                     if key[1]:
                         for problem in tracked:
                             if problem.test == key[1]:
@@ -706,7 +674,7 @@ class TaskState:
         """Objective de trabalho derivado do prompt canônico.
 
         É o que o Planner/Executor devem usar como objetivo principal
-        (integração Fase 4); o texto integral está em
+        (integração); o texto integral está em
         `canonical_prompt` e o original do usuário em
         `original_prompt` (nunca descartado).
         """
@@ -727,7 +695,7 @@ class TaskState:
         `blocked`: há pendência bloqueante (ex.: error checklist).
         `started`: alguma decisão/execução já ocorreu.
         Transições: pending → in_progress (primeiro pendente, após
-        início) → completed (done) ; in_progress → blocked (falha);
+        início) → completed (done); in_progress → blocked (falha);
         blocked → in_progress (desbloqueou) ou → completed (done).
         Nunca levanta.
         """
@@ -773,7 +741,6 @@ class TaskState:
                         entry.status = (
                             PLAN_STATUS_IN_PROGRESS if started
                             else PLAN_STATUS_PENDING)
-            # Primeiro pendente vira in_progress após o início.
             if started and not blocked and first_open is not None:
                 for entry in self.plan:
                     if entry.index == first_open and entry.status == (
@@ -784,7 +751,6 @@ class TaskState:
         except Exception:
             pass
 
-    # ----- consultas -----
 
     @property
     def open_problems(self) -> list[Problem]:
@@ -810,7 +776,6 @@ class TaskState:
             return {"total": 0, "succeeded": 0, "failed": 0,
                     "decisions": 0}
 
-    # ----- serialização determinística -----
 
     def to_dict(self) -> dict:
         """Dict JSON-serializável (ordem de campos estável)."""
@@ -864,10 +829,7 @@ class TaskState:
         except Exception:
             return cls()
 
-    # ----- renderização compacta (consumo futuro) -----
 
-    # Problemas por render no Planner (detalhe) — Executor usa
-    # KNOWN PROBLEMS + contagens (sem duplicar o detalhe).
     MAX_RENDER_PROBLEM_DETAIL = 8
 
     def render_compact(
@@ -966,10 +928,10 @@ class TaskState:
 
     @staticmethod
     def _render_problem_line(problem) -> str:
-        """Uma linha rica por problema aberto (Fase 6, Planner).
+        """Uma linha rica por problema aberto (Planner).
 
-        Formato: `- [status] id descrição | files: .. | cause: .. |
-        fix: ..` — descrição primeiro (compat com parsers simples).
+        Formato: `- [status] id descrição | files:.. | cause:.. |
+        fix:..` - descrição primeiro (compat com parsers simples).
         Só fatos/hipóteses do estado; nada de output bruto.
         """
         try:

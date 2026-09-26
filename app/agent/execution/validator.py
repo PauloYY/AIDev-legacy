@@ -7,11 +7,6 @@ from app.tools.schema_validator import SchemaValidator
 
 class TaskValidator:
 
-    # Ferramentas de pura investigação: fazem sentido como dependency
-    # (reunir informação antes de agir), mas por padrão não como task
-    # principal — deixar o Planner usá-las sozinhas livremente tende
-    # a abrir ciclos de investigação sem progresso real. A exceção é
-    # controlada pelo Runner via `allow_investigation` (ver abaixo).
     DEPENDENCY_ONLY_TOOLS = {"read_file", "list_files", "find_references"}
 
     def __init__(

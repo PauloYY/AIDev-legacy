@@ -118,7 +118,6 @@ def real_tools(projects_root, monkeypatch):
     return tools
 
 
-# 1. Repetição idêntica sem progresso → bloqueada.
 def test_identical_repeat_without_progress_is_blocked(real_tools):
     task = _write_task()
     runner = _real_runner(
@@ -132,7 +131,6 @@ def test_identical_repeat_without_progress_is_blocked(real_tools):
     assert len(_repetition_blocks(events)) == 1
 
 
-# 5. Repetição real de run_command mutante também é detectada.
 def test_identical_mutating_run_command_is_blocked(real_tools):
     write_file("p", "dummy.txt", "x")
     cmd = "cat > out.txt <<'EOF'\nhi\nEOF"
@@ -148,7 +146,6 @@ def test_identical_mutating_run_command_is_blocked(real_tools):
     assert len(_repetition_blocks(events)) == 1
 
 
-# 2. read (investigação) → write → permitida.
 def test_read_then_write_is_allowed(real_tools):
     write_file("p", "app.py", "x = 1\n")
     write = _write_task(content="x = 1\n")
@@ -168,7 +165,6 @@ def test_read_then_write_is_allowed(real_tools):
     assert _repetition_blocks(events) == []
 
 
-# 3. write → teste com erro → mesmo write → permitida.
 def test_write_after_failing_test_is_allowed(real_tools):
     write = _write_task()
     fail = _run_task(FAIL_PYTEST)
@@ -185,7 +181,6 @@ def test_write_after_failing_test_is_allowed(real_tools):
     assert _repetition_blocks(events) == []
 
 
-# 4. Fluxo observado no benchmark: write → erro → read → write → teste.
 def test_observed_trace_flow_is_allowed(real_tools):
     write = _write_task()
     fail = _run_task(FAIL_PYTEST)
@@ -206,10 +201,7 @@ def test_observed_trace_flow_is_allowed(real_tools):
     assert _repetition_blocks(events) == []
 
 
-# 6/7. Erro identificado e disponível para o Planner.
 def test_failing_test_error_reaches_planner_context(real_tools):
-    # Fase 5: retest sem correção é bloqueado pelo gate — o fluxo
-    # correto insere um write (fix) entre a falha e o retest.
     write_file("p", "dummy.txt", "x")
     llm = StubLLM(["pytest falhou em test_x: AssertionError"])
     checklist = ErrorChecklist(llm)
@@ -228,15 +220,11 @@ def test_failing_test_error_reaches_planner_context(real_tools):
     result, _ = _run_events(runner, objective="o", project_name="p")
     assert result == "done"
     contexts = runner.planner.received_contexts
-    # Fase 6: o Planner recebe a evidência REAL (não mais o texto
-    # canned do StubLLM, que era resposta fake do checklist legado).
     assert any("nonexistent_path_xyz" in ctx for ctx in contexts)
     assert checklist.pending_count == 0
 
 
-# 8. Erro resolvido limpa o checklist e libera o finish.
 def test_resolved_error_unblocks_finish(real_tools):
-    # Fase 5: retest exige correção antes (gate); fluxo corrigido.
     write_file("p", "dummy.txt", "x")
     llm = StubLLM(["algum erro"])
     checklist = ErrorChecklist(llm)
@@ -257,7 +245,6 @@ def test_resolved_error_unblocks_finish(real_tools):
     assert checklist.pending_count == 0
 
 
-# 9. Correção seguida de novo teste (teste roda 2x: falha e passa).
 def test_fix_is_followed_by_retest(real_tools):
     llm = StubLLM(["falha inicial"])
     checklist = ErrorChecklist(llm)
@@ -282,7 +269,6 @@ def test_fix_is_followed_by_retest(real_tools):
     assert len(tool_starts) == 2
 
 
-# 10. Erro persistente não gera loop infinito (limite de iterações).
 def test_persistent_error_is_bounded(real_tools):
     fail = _run_task(FAIL_PYTEST)
     runner = _real_runner(
@@ -295,7 +281,6 @@ def test_persistent_error_is_bounded(real_tools):
         runner.run(objective="o", project_name="p")
 
 
-# Correções idênticas repetidas disparam estagnação, não loop infinito.
 def test_repeated_identical_fixes_trigger_stagnation(real_tools):
     write_file("p", "a.py", "x = 1\n")
     write = _write_task(path="a.py", content="x = 1\n")
@@ -323,7 +308,6 @@ def test_repeated_identical_fixes_trigger_stagnation(real_tools):
                for ctx in runner.planner.received_contexts)
 
 
-# _command_succeeded: só a primeira linha vale.
 def test_command_success_uses_first_line_only(real_tools):
     runner = _real_runner(real_tools, [], [])
     ok_output = ("STATUS: success (exit code 0)\n\nSTDOUT:\nhello\n\n"
@@ -337,12 +321,10 @@ def test_command_success_uses_first_line_only(real_tools):
     assert runner._command_succeeded("write_file", "qualquer coisa") is True
 
 
-# Timeout preserva itens reais e bloqueia o finish.
 def test_timeout_preserves_errors_and_blocks_finish(real_tools):
     llm = StubLLM(["ERRO REAL"])
     checklist = ErrorChecklist(llm)
     runner = _real_runner(real_tools, [], [], error_checklist=checklist)
-    # Fase 6: saída com falha parseável (evidência real p/ unificada).
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
         "STATUS: failure (exit code 1)\nFAILED t.py::test_x\nboom",
@@ -354,13 +336,11 @@ def test_timeout_preserves_errors_and_blocks_finish(real_tools):
         "run_command", {"command": "pytest -q"},
         "TIMEOUT: execution exceeded 15s and was interrupted.",
         False, iteration=2)
-    # generate NÃO foi chamado de novo; itens reais preservados.
     assert len(llm.calls) == calls_before
     assert checklist.pending_count == 2
     assert any("timed out" in item.description
                for item in checklist._items)
 
-    # Timeout com checklist vazio ainda bloqueia.
     fresh = ErrorChecklist(llm)
     runner2 = _real_runner(real_tools, [], [], error_checklist=fresh)
     runner2._update_error_checklist(
@@ -369,14 +349,12 @@ def test_timeout_preserves_errors_and_blocks_finish(real_tools):
         False, iteration=1)
     assert fresh.pending_count == 1
 
-    # Sucesso limpa tudo, inclusive a nota de timeout.
     runner._update_error_checklist(
         "run_command", {"command": "pytest -q"},
         "STATUS: success (exit code 0)", True, iteration=3)
     assert checklist.pending_count == 0
 
 
-# Erro de infra (tool lançou exceção) também preserva.
 def test_tool_exception_preserves_errors(real_tools):
     llm = StubLLM(["ERRO REAL"])
     checklist = ErrorChecklist(llm)

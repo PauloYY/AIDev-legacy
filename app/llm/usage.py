@@ -15,7 +15,7 @@ def _estimated_tokens_for_chars(chars: int) -> int:
 
 @dataclass
 class ToolCallRecord:
-    """Uma execução de tool (Fase 3): sem tokens, sem conteúdo sensível.
+    """Uma execução de tool: sem tokens, sem conteúdo sensível.
 
     `command` só para run_command (truncado na origem); nunca inclui
     conteúdo de write_file.
@@ -40,20 +40,12 @@ class CallRecord:
     timestamp: str
     prompt_chars: int = 0
     completion_chars: int = 0
-    # Etapa 2B: decomposição observacional do prompt do Planner.
-    # {component: {"chars": int, "estimated_tokens": int}}. Apenas para
-    # component="Planner"; None para demais componentes/chamadas antigas.
     context_breakdown: dict[str, dict[str, int]] | None = None
-    # Etapa 2E: observabilidade por chamada (defaults mantêm compat).
     duration_ms: float = 0.0
     attempt: int = 1
     empty_response: bool = False
     success: bool = True
     error: str | None = None
-    # Fase 3 Etapa 2 (short repair): qual prompt originou a chamada do
-    # Planner — "normal" (primeira tentativa), "short_repair" (reparo
-    # curto) ou "full_retry" (retry com contexto completo). Default
-    # mantém compat com registros antigos e outros componentes.
     request_type: str = "normal"
 
     @property
@@ -196,7 +188,6 @@ class UsageTracker:
     def get_records(self) -> list[CallRecord]:
         return list(self._records)
 
-    # ---------- Fase 3 Etapa 2: short repair do Planner ----------
 
     def planner_request_stats(self) -> dict[str, Any]:
         """Agregados do Planner por request_type (só observa).
@@ -235,17 +226,16 @@ class UsageTracker:
 
         return groups
 
-    # ---------- Etapa 4: agregados por componente (chamadas/contexto) ----------
 
     def component_stats(self) -> dict[str, dict[str, Any]]:
-        """Agregados por componente LLM (Etapa 4, só observa).
+        """Agregados por componente LLM (só observa).
 
         Para cada componente retorna: calls, prompt_chars (sum/avg/max),
         completion_chars (sum), prompt/completion/total_tokens REAIS do
         provider (sum; avg de prompt), latency_ms (sum/avg/max),
         retries (attempts > 1), empty_responses e failures. Tokens reais
         vêm de record.usage (resposta do provider); quando o provider
-        não informa, valem 0 — nunca estimativa silenciosa.
+        não informa, valem 0 - nunca estimativa silenciosa.
         """
 
         groups: dict[str, dict[str, Any]] = {}
@@ -298,7 +288,6 @@ class UsageTracker:
 
         return groups
 
-    # ---------- Etapa 2E: métricas do ProjectSummaryUpdater ----------
 
     def _updater_records(self) -> list[CallRecord]:
         return [
@@ -306,7 +295,7 @@ class UsageTracker:
         ]
 
     def project_summary_stats(self) -> dict[str, Any]:
-        """Agregados do ProjectSummaryUpdater (Etapa 2E).
+        """Agregados do ProjectSummaryUpdater.
 
         Invocações são delimitadas por attempt==1 (retries compartilham
         a invocação). Sucesso/falha = estado do último attempt.
@@ -395,7 +384,6 @@ class UsageTracker:
         ]
         return "\n".join(lines)
 
-    # ---------- Etapa Fase 3: métricas de ferramentas ----------
 
     def record_tool(
         self,
@@ -458,7 +446,6 @@ class UsageTracker:
             "by_tool": by_tool,
         }
 
-    # ---------- Etapa 2B: instrumentação do contexto do Planner ----------
 
     def get_planner_context_history(self) -> list[dict[str, Any]]:
         """Histórico por iteração da decomposição do prompt do Planner.
@@ -466,7 +453,7 @@ class UsageTracker:
         Retorna uma lista (ordem de chamada) com:
         {"iteration", "prompt_chars", "provider_prompt_tokens",
          "estimated_total_tokens", "sections": {component: {...}}}.
-        Chamadas sem breakdown (não-Planner ou anteriores à Etapa 2B)
+        Chamadas sem breakdown (não-Planner ou anteriores à)
         são ignoradas.
         """
         history: list[dict[str, Any]] = []
@@ -495,7 +482,7 @@ class UsageTracker:
 
         Retorna {"calls", "components": {name: {avg, total, max, avg_chars,
         total_chars, max_chars}}, "estimated_total_tokens",
-        "provider_prompt_tokens_total", ...}. Vazio (calls=0) se sem dados.
+        "provider_prompt_tokens_total",...}. Vazio (calls=0) se sem dados.
         """
         history = self.get_planner_context_history()
         calls = len(history)
@@ -545,12 +532,12 @@ class UsageTracker:
         }
 
     def planner_context_breakdown(self) -> str:
-        """Relatório observacional do contexto do Planner (Etapa 2B).
+        """Relatório observacional do contexto do Planner.
 
         Compatível e separado de breakdown(): não altera o formato
         existente. Mostra média/total/máximo ESTIMADOS por componente,
         compara com os tokens de prompt reais do provider e lista o
-        crescimento por iteração. Puro relatório — sem otimização.
+        crescimento por iteração. Puro relatório - sem otimização.
         """
         stats = self.planner_context_stats()
         calls = stats["calls"]

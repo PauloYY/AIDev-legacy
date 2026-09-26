@@ -1,9 +1,4 @@
-"""Fase 4 — TaskState + canonicalização + Interpreter + integração.
-
-TaskState (criação/serialização/render), canonicalização PT→EN
-(com/sem LLM, fallbacks), Interpreter determinístico (sem invenção) e
-integração ao Runner (estado criado/mantido, fluxo antigo intacto).
-"""
+"""TaskState + canonicalização + Interpreter + integração."""
 
 import json
 
@@ -27,10 +22,6 @@ from app.agent.taskstate.task_state import TaskState
 from app.agent.trace import ExecutionTrace, NullTrace
 from app.llm.models import LLMResponse, Usage
 
-
-# --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
 def _no_disk_persistence(monkeypatch):
@@ -93,10 +84,6 @@ def _runner(decisions, executions, trace, **overrides):
     )
 
 
-# --------------------------------------------------------------------------
-# TaskState: criação, defaults, campos
-# --------------------------------------------------------------------------
-
 def test_state_creation_defaults():
     state = TaskState()
     assert state.original_prompt == ""
@@ -125,8 +112,6 @@ def test_state_record_methods_never_raise():
     state.record_problem(None)
     state.record_correction("")
     state.record_verification(None, False)
-    # Entradas ruins viram registros defensivos (iteração 0), nunca exceção;
-    # descrições vazias são descartadas.
     assert state.progress_summary["total"] == 1
     assert state.decisions[0].iteration == 0
     assert state.problems == []
@@ -147,10 +132,6 @@ def test_state_progress_and_resolve():
     assert state.resolve_problems() == 0
 
 
-# --------------------------------------------------------------------------
-# TaskState: serialização
-# --------------------------------------------------------------------------
-
 def test_state_to_dict_json_serializable():
     state = TaskState(original_prompt="  Crie X  ",
                       canonical_prompt="Create X", language="pt",
@@ -159,7 +140,7 @@ def test_state_to_dict_json_serializable():
     data = state.to_dict()
     assert data["original_prompt"] == "  Crie X  "
     assert data["translation_applied"] is True
-    assert json.dumps(data, sort_keys=True)  # serializável
+    assert json.dumps(data, sort_keys=True)
     assert data["problems"][0]["description"] == "boom"
     assert data["problems"][0]["resolved"] is False
 
@@ -197,10 +178,6 @@ def test_state_serialization_deterministic():
     assert _build() == _build()
 
 
-# --------------------------------------------------------------------------
-# TaskState: render_compact
-# --------------------------------------------------------------------------
-
 def test_render_compact_sections_and_empty_markers():
     state = TaskState(objective="Create notes app", language="en")
     out = state.render_compact()
@@ -234,13 +211,8 @@ def test_render_compact_is_bounded_and_deterministic():
     out2 = state.render_compact()
     assert out1 == out2
     assert len(out1) < 6000
-    # Janela de detalhe (Fase 6): 30 - 8 por render.
     assert "[+22 more]" in out1
 
-
-# --------------------------------------------------------------------------
-# Canonicalização: normalização e idioma
-# --------------------------------------------------------------------------
 
 def test_normalize_preserves_lines_and_content():
     assert normalize_prompt("  Crie X  \n\n  - item 1  \n- item 2\n\n\n") == (
@@ -253,13 +225,11 @@ def test_detect_language():
     assert detect_language("Crie um sistema de notas válido") == "pt"
     assert detect_language("Create a simple notes system") == "en"
     assert detect_language("obj") == "en"
-    assert detect_language("") == "en"  # vazio: default inofensivo
+    assert detect_language("") == "en"
     assert detect_language(None) == "unknown"
 
 
 def test_needs_translation_only_on_strong_signal():
-    # Integração Fase 4: acentos OU PT-ASCII com forte evidência
-    # (verbo + outro token). Token isolado nunca dispara.
     assert needs_translation("Crie um sistema válido") is True
     assert needs_translation("meu objetivo real") is False
     assert needs_translation("Analise o projeto e descreva",
@@ -302,7 +272,7 @@ def test_portuguese_prompt_translated_with_llm():
     assert result.translation_applied is True
     assert result.language == "pt"
     assert result.canonical_prompt.startswith("Create a simple")
-    assert result.original_prompt == original  # original intacto
+    assert result.original_prompt == original
     assert llm.calls[0]["component"] == "PromptCanonicalizer"
 
 
@@ -322,7 +292,6 @@ def test_translation_preserves_requirements_and_identifiers():
 def test_translation_does_not_invent_or_plan():
     llm = _ScriptedLLM(content="Create the valid app.")
     result = PromptCanonicalizer(llm=llm).canonicalize("Crie o app válido.")
-    # Tradução é linguística: sem arquitetura/decisões no prompt enviado.
     sent = llm.calls[0]["prompt"]
     assert "do NOT plan" in sent
     assert "add requirements" in sent
@@ -368,10 +337,6 @@ def test_original_prompt_never_altered():
     assert result.original_prompt == original
     assert result.canonical_prompt == "Crie X válido.\n\n- item 1"
 
-
-# --------------------------------------------------------------------------
-# Interpreter
-# --------------------------------------------------------------------------
 
 def test_interpreter_objective():
     interp = TaskInterpreter().interpret(
@@ -427,7 +392,7 @@ def test_interpreter_empty_and_garbage():
 def test_interpreter_does_not_invent():
     interp = TaskInterpreter().interpret(
         "Create a simple notes manager with in-memory storage.")
-    assert interp.requirements == []  # sem lista → sem requisitos
+    assert interp.requirements == []
     assert interp.constraints == []
     assert interp.objective.startswith("Create a simple notes manager")
 
@@ -445,10 +410,6 @@ def test_interpreter_complex_prompt():
     assert len(interp.ambiguities) == 1
     assert interp.objective == "Create a task manager with a JSON backend."
 
-
-# --------------------------------------------------------------------------
-# Integração: estado criado, mantido, fluxo intacto
-# --------------------------------------------------------------------------
 
 def test_state_created_at_run_start(tmp_path):
     trace = ExecutionTrace(trace_dir=str(tmp_path / "t"))
@@ -472,7 +433,6 @@ def test_state_survives_iterations(tmp_path):
         [_exec_for(task)], NullTrace())
     runner.run(objective="obj", project_name="p")
     state = runner.task_state
-    # Toda decisão validada (task + finish) é registrada.
     assert len(state.decisions) == 2
     assert state.decisions[0].tool == "write_file"
     assert state.decisions[0].file_path == "a.py"
@@ -508,7 +468,6 @@ def test_interpret_error_does_not_destroy_run(tmp_path, monkeypatch):
             result=FinalVerificationResult(FinalVerificationResult.OK)),
         execution_trace=NullTrace(),
     )
-    # Prompt acentuado + LLM quebrada → fallback, run continua.
     assert runner.run(objective="Crie um app válido",
                       project_name="p") == "done"
     assert runner.task_state.original_prompt == "Crie um app válido"
@@ -527,8 +486,6 @@ def test_planner_executor_unaffected(tmp_path):
 
     task = _task("write_file", {"project_name": "p",
                                 "file_path": "a.py", "content": "x"})
-    # PT com acento: fluxo atual continua recebendo o ORIGINAL (Fase 4
-    # não injeta o canônico nos prompts — migração futura).
     runner = _runner(
         [Decision(action=DecisionAction.TASK, task=task), _finish()],
         [_exec_for(task)], NullTrace())
@@ -571,7 +528,6 @@ def test_problems_and_corrections_from_test_cycle(tmp_path):
             self.n = 0
 
         def execute(self, tool, arguments):
-            # Só run_command conta (list_files da memória passa aqui).
             if tool != "run_command":
                 return super().execute(tool, arguments)
             self.n += 1
@@ -611,12 +567,10 @@ def test_problems_and_corrections_from_test_cycle(tmp_path):
     )
     assert runner.run(objective="obj", project_name="p") == "done"
     state = runner.task_state
-    # Fase 5: problema vem do Analyzer (fallback determinístico), não
-    # mais do espelho do checklist; correção do fix + nota do verde.
     assert len(state.problems) == 1
     assert "test_x" in state.problems[0].description
     assert state.problems[0].status == "resolved"
-    assert state.open_problems == []  # resolvido pelo teste verde
+    assert state.open_problems == []
     assert len(state.corrections) == 2
     assert state.corrections[0].problem_id == (
         state.problems[0].problem_id)
@@ -678,8 +632,6 @@ def test_no_extra_llm_calls_for_english_run(tmp_path):
             result=FinalVerificationResult(FinalVerificationResult.OK)),
         execution_trace=NullTrace(),
     )
-    # EN: só o finish (1 call, FakeChecklist não chama LLM);
-    # canonicalização = 0 calls (qualquer chamada extra apareceria aqui).
     assert runner.run(objective="Create a notes app",
                       project_name="p") == "done"
     assert provider.calls == 1

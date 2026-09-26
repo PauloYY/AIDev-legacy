@@ -9,11 +9,8 @@ from app.llm.models import Message
 class ErrorChecklistItem:
     id: int
     description: str
-    # --- Fase 6: projeção da análise unificada (defaults seguros;
-    # itens legados/sintéticos continuam válidos sem eles) ---
     test_id: str = ""
     affected_files: list[str] = field(default_factory=list)
-    # Comando e iteração de origem (rastreabilidade da evidência).
     command: str = ""
     iteration: int | None = None
 
@@ -21,10 +18,10 @@ class ErrorChecklistItem:
 class ErrorChecklist:
     """Checklist das falhas de teste/build ATUAIS.
 
-    Fase 6: projeção operacional da análise unificada
+    Projeção operacional da análise unificada
     (`apply_unified`, sem LLM próprio). O legado `generate` (LLM
     própria) segue disponível p/ compatibilidade e benchmark, mas o
-    hot path não o usa mais — uma análise, vários consumidores.
+    hot path não o usa mais - uma análise, vários consumidores.
 
     Diferente do ProjectChecklist (fixo a run inteira, definido uma
     única vez), este é efêmero e evidência-based:
@@ -32,7 +29,7 @@ class ErrorChecklist:
     - É gerado do zero sempre que um run_command de teste/build
       falha, a partir da saída real desse comando.
     - É limpo automaticamente assim que um run_command de teste/build
-      volta a ter sucesso — sem precisar de nenhuma marcação manual
+      volta a ter sucesso - sem precisar de nenhuma marcação manual
       da LLM. O progresso aqui é sempre validado por execução real,
       nunca por autoavaliação: se ainda falhar (mesmo que só
       parcialmente), o checklist é regerado do zero a partir da nova
@@ -116,10 +113,10 @@ RULES:
         ]
 
     def apply_unified(self, analysis) -> int:
-        """Projeção da análise unificada (Fase 6, SEM LLM).
+        """Projeção da análise unificada (SEM LLM).
 
         Substitui os itens pelos da análise (hipóteses primeiro;
-        fatos determinísticos quando só eles existirem) — mesma
+        fatos determinísticos quando só eles existirem) - mesma
         semântica de regenerate-from-scratch do generate(). Também
         serve como fallback determinístico (análise sem problemas e
         sem fatos → checklist vazio, como o legado com []). Retorna

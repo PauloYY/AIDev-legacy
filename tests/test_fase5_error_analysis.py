@@ -1,9 +1,4 @@
-"""Fase 5 — Error Analyzer + ciclo de correção + test gate.
-
-Analyzer (1 call, anti-invenção, fallback), Problem/Correction
-estruturados, gate de retest, correction loop, novo erro,
-persistência e regressão das flags.
-"""
+"""Error Analyzer + ciclo de correção + test gate."""
 
 import json
 
@@ -39,10 +34,6 @@ from app.llm.models import LLMResponse, Usage
 def _no_disk_persistence(monkeypatch):
     monkeypatch.setattr(Config, "task_state_persist", False)
 
-
-# --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
 
 FAIL_3 = (
     "STATUS: failure (exit code 1)\n"
@@ -152,10 +143,6 @@ def _events(trace, name):
     return [e for e in trace.read_events() if e["event"] == name]
 
 
-# --------------------------------------------------------------------------
-# Error Analyzer
-# --------------------------------------------------------------------------
-
 def test_no_error_no_problems_no_call():
     analysis = ErrorAnalyzer(llm=_ScriptedLLM(content="{}")).analyze(
         "python -m pytest -q", PASS)
@@ -254,7 +241,7 @@ def test_no_evidence_no_problems():
     analysis = ErrorAnalyzer().analyze(
         "pytest", "STATUS: failure (exit code 1)\nblablabla sem padrão")
     assert analysis.problems == []
-    assert analysis.fallback_used is True  # tentou, sem inventar
+    assert analysis.fallback_used is True
 
 
 def test_llm_none_uses_fallback():
@@ -267,7 +254,6 @@ def test_llm_none_uses_fallback():
 def test_normalize_helpers():
     assert normalize_test_id("FAILED test_cart.py::test_total - x") == (
         "test_cart.py::test_total")
-    # Basename de propósito (estável entre working dirs).
     assert normalize_test_id("src/a.py::t (extra)") == "a.py::t"
     assert normalize_test_id("no test here") == ""
     assert normalize_test_id(None) == ""
@@ -284,7 +270,7 @@ def test_max_problems_cap():
 
 def test_analyzer_tracked_as_component():
     from app.llm.usage import UsageTracker
-    from app.tools.registry import ToolRegistry  # noqa: F401
+    from app.tools.registry import ToolRegistry
 
     class _Provider:
         name = "p"
@@ -305,10 +291,6 @@ def test_analyzer_tracked_as_component():
     tracker = UsageTracker()
     assert "ErrorAnalyzer" not in tracker.component_stats()
 
-
-# --------------------------------------------------------------------------
-# Problem / Correction
-# --------------------------------------------------------------------------
 
 def test_problem_defaults_and_status_flow():
     state = TaskState()
@@ -377,13 +359,11 @@ def test_exact_rededup_and_invalidation():
     state.add_analyzed_problems(
         [AnalyzedProblem(error="FAILED a", test="a.py::t")],
         source="pytest", iteration=1)
-    # Mesma evidência → sem duplicar.
     created, invalidated = state.add_analyzed_problems(
         [AnalyzedProblem(error="FAILED a", test="a.py::t")],
         source="pytest", iteration=2)
     assert created == [] and invalidated == []
     assert len(state.problems) == 1
-    # Mesmo teste, erro diferente → invalida + cria novo.
     created, invalidated = state.add_analyzed_problems(
         [AnalyzedProblem(error="FAILED a differently",
                          test="a.py::t")], source="pytest", iteration=3)
@@ -434,10 +414,6 @@ def test_render_known_problems():
     assert "pending" in block
 
 
-# --------------------------------------------------------------------------
-# Test Gate (integração Runner)
-# --------------------------------------------------------------------------
-
 def _fail_ok_tools(fail_text):
     return _ScriptedTools([fail_text, PASS])
 
@@ -456,15 +432,12 @@ def test_pending_problem_blocks_retest(tmp_path):
          _exec_for(test)],
         trace, tools=tools)
     assert runner.run(objective="obj", project_name="p") == "done"
-    # Só 2 execuções reais de teste (falha + retest final).
     assert tools.ran_commands == ["python -m pytest -q"] * 2
     blocked = _events(trace, "test_blocked_pending_problems")
     assert len(blocked) == 2
     assert blocked[0]["iteration"] == 2
     assert len(blocked[0]["problems"]) == 3
-    # Segundo bloqueio cita só o problema ainda pendente.
     assert blocked[1]["problems"] == ["p003"]
-    # Planner foi avisado com mensagem estruturada (não erro de infra).
     contexts = runner.planner.received_contexts
     assert any("TEST_BLOCKED_BY_PENDING_PROBLEMS" in ctx
                for ctx in contexts)
@@ -479,17 +452,13 @@ def test_problems_recorded_without_retest(tmp_path):
     runner = _runner(
         [_task_decision(fail), _finish()], [_exec_for(fail)],
         trace, tools=tools)
-    # FakeErrorChecklist nunca tem pendências → finish passa.
     assert runner.run(objective="obj", project_name="p") == "done"
     assert tools.ran_commands == ["python -m pytest -q"]
     assert _events(trace, "test_blocked_pending_problems") == []
-    # Problemas seguem registrados (semântica), mesmo com finish ok.
     assert len(runner.task_state.problems) == 3
 
 
 def test_blocked_problem_does_not_deadlock(tmp_path):
-    # Tentativa mutante com erro de tool → blocked; nova tentativa →
-    # in_progress → sucesso → pending_verification → retest permitido.
     trace = _trace(tmp_path)
     fail = _run_task("python -m pytest -q")
     tools = _ScriptedTools([FAIL_3, PASS], write_errors=1)
@@ -508,7 +477,7 @@ def test_blocked_problem_does_not_deadlock(tmp_path):
     state = runner.task_state
     assert all(p.status == PROBLEM_STATUS_RESOLVED
                for p in state.problems)
-    assert len(state.corrections) >= 2  # fixes + nota do verde
+    assert len(state.corrections) >= 2
 
 
 def test_normal_command_not_blocked(tmp_path):
@@ -566,7 +535,6 @@ def test_gate_flag_off_preserves_legacy(tmp_path, monkeypatch):
     assert runner.run(objective="obj", project_name="p") == "done"
     assert tools.ran_commands == ["python -m pytest -q"] * 2
     assert _events(trace, "test_blocked_pending_problems") == []
-    # Problemas continuam registrados mesmo sem gate.
     assert len(runner.task_state.problems) == 3
 
 
@@ -588,7 +556,6 @@ def test_analyzer_flag_off_uses_legacy_mirror(tmp_path, monkeypatch):
 
         @property
         def pending_count(self):
-            # Bloqueia o 1º finish; libera o 2º (fim determinístico).
             self._checks += 1
             return 1 if self._checks <= 2 else 0
 
@@ -603,10 +570,6 @@ def test_analyzer_flag_off_uses_legacy_mirror(tmp_path, monkeypatch):
         "falha extraída 1"]
     assert _events(trace, "error_analysis_completed") == []
 
-
-# --------------------------------------------------------------------------
-# Correction Loop
-# --------------------------------------------------------------------------
 
 def _three_fail_tools():
     fail_a = ("STATUS: failure (exit code 1)\nFAILED a.py::test_a\n"
@@ -635,7 +598,7 @@ def test_three_errors_three_corrections_then_test(tmp_path):
     state = runner.task_state
     assert len(state.problems) == 3
     assert state.open_problems == []
-    assert len(state.corrections) == 4  # 3 fixes + nota do verde
+    assert len(state.corrections) == 4
     assert tools.ran_commands == ["python -m pytest -q"] * 2
     assert _events(trace, "test_blocked_pending_problems") == []
     assert len(_events(trace, "correction_applied")) == 3
@@ -651,8 +614,6 @@ def test_partial_fix_keeps_gate_closed(tmp_path):
          _finish()],
         [_exec_for(test), _exec_for(wa), _exec_for(test)],
         trace, tools=tools)
-    # finish bloqueado? FakeErrorChecklist sem pendências → finish passa,
-    # mas o retest do meio deve ter sido bloqueado (b, c pendentes).
     assert runner.run(objective="obj", project_name="p") == "done"
     assert tools.ran_commands == ["python -m pytest -q"]
     blocked = _events(trace, "test_blocked_pending_problems")
@@ -682,10 +643,6 @@ def test_one_correction_covers_related_problems(tmp_path):
                if c.files_changed == ["u.py"])
 
 
-# --------------------------------------------------------------------------
-# Novo erro após retest
-# --------------------------------------------------------------------------
-
 def test_new_error_creates_new_problem(tmp_path):
     trace = _trace(tmp_path)
     fail_old = ("STATUS: failure (exit code 1)\nFAILED a.py::test_a\n"
@@ -703,8 +660,6 @@ def test_new_error_creates_new_problem(tmp_path):
         trace, tools=tools)
     assert runner.run(objective="obj", project_name="p") == "done"
     state = runner.task_state
-    # p001 não re-evidenciado segue pending_verification; p002 nasce
-    # pending e bloqueia o 3º retest (só 2 execuções reais).
     by_test = {p.test: p.status for p in state.problems}
     assert by_test.get("a.py::test_a") == "pending_verification"
     assert by_test.get("b.py::test_b") == "pending"
@@ -731,10 +686,6 @@ def test_same_test_new_error_invalidates_old(tmp_path):
     assert any(e["event"] == "problem_invalidated"
                for e in trace.read_events())
 
-
-# --------------------------------------------------------------------------
-# Executor recebe KNOWN PROBLEMS + Short Repair intacto
-# --------------------------------------------------------------------------
 
 def test_executor_receives_known_problems(tmp_path):
     seen = []
@@ -774,7 +725,7 @@ def test_executor_receives_known_problems(tmp_path):
     assert "KNOWN PROBLEMS" in seen[1]
     assert "test_cart.py::test_total" in seen[1]
     assert "Probable cause" in seen[1]
-    assert "verify" in seen[1]  # hipótese, não ordem
+    assert "verify" in seen[1]
 
 
 def test_short_repair_untouched_by_analyzer(tmp_path):
@@ -837,10 +788,6 @@ def test_short_repair_untouched_by_analyzer(tmp_path):
     assert [e["retry_type"] for e in retries] == ["short_repair"]
     assert _events(trace, "error_analysis_started") == []
 
-
-# --------------------------------------------------------------------------
-# Persistência dos novos campos
-# --------------------------------------------------------------------------
 
 def test_structured_roundtrip_persists(projects_root, tmp_path,
                                        monkeypatch):

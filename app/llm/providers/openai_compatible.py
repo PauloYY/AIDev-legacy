@@ -292,13 +292,6 @@ class OpenAICompatibleProvider(LLMProvider):
             raise LLMRateLimitError(message, retry_after=retry_after)
 
         if "rate_limit" in str(message).lower():
-            # Alguns providers (ex.: Agnes) devolvem rate limit como
-            # HTTP 500 genérico em vez de 429, com o motivo real só no
-            # corpo da mensagem (ex.: "rate_limit_check_failed"). Sem
-            # essa checagem, isso seria tratado como "erro transitório
-            # genérico" — funcionalmente similar (também cai no
-            # fallback), mas com um log confuso e sem chance de usar
-            # um eventual header Retry-After.
             retry_after = self._parse_retry_after(response)
             raise LLMRateLimitError(message, retry_after=retry_after)
 

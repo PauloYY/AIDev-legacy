@@ -118,9 +118,9 @@ RULES:
 
     @property
     def statuses(self) -> list[tuple[int, bool]]:
-        """[(id, done)] para sincronizar o TaskState.plan (Fase 4).
+        """[(id, done)] para sincronizar o TaskState.plan.
 
-        Só identidade + estado — as descrições continuam aqui (o
+        Só identidade + estado - as descrições continuam aqui (o
         TaskState referencia, não copia).
         """
         try:

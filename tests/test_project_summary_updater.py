@@ -1,9 +1,4 @@
-"""Etapa 2D — compactação do prompt do ProjectSummaryUpdater.
-
-Garante que write_file.content e resultados grandes não vão integrais
-ao prompt, que os objetos originais seguem intactos e que o fluxo
-(update → LLM → write) continua funcionando.
-"""
+"""Compactação do prompt do ProjectSummaryUpdater."""
 
 import pytest
 
@@ -39,7 +34,7 @@ def updater(projects_root):
 
 
 def _legacy_prompt(objective, current_summary, task, result) -> str:
-    """Reconstrução fiel do prompt ANTES da 2D (args + result integrais).
+    """Reconstrução fiel do prompt antigo (args + result integrais).
 
     O código antigo interpolava {task.arguments} e {result} diretamente;
     esta réplica serve só para medir a redução.
@@ -85,7 +80,7 @@ REGRAS:
 
 def test_write_file_grande_nao_vai_integral_ao_prompt(updater):
     updater_obj, llm = updater
-    big = "CONTEUDO-SECRETO-" * 700  # ~12KB
+    big = "CONTEUDO-SECRETO-" * 700
     task = Task(
         tool="write_file",
         arguments={
@@ -98,8 +93,8 @@ def test_write_file_grande_nao_vai_integral_ao_prompt(updater):
         objective="obj", project_name="p", task=task, result="ok"
     )
     prompt = llm.prompts[0]
-    assert "app.py" in prompt  # path preservado
-    assert str(len(big)) in prompt  # tamanho preservado
+    assert "app.py" in prompt
+    assert str(len(big)) in prompt
     assert big not in prompt
     assert "CONTEUDO-SECRETO" not in prompt
 
@@ -130,8 +125,8 @@ def test_string_grande_em_outro_argumento_e_truncada(updater):
     )
     prompt = llm.prompts[0]
     assert huge not in prompt
-    assert "chars]" in prompt  # indicador de truncamento
-    assert huge[:200] in prompt  # prefixo preservado
+    assert "chars]" in prompt
+    assert huge[:200] in prompt
 
 
 def test_result_grande_e_truncado(updater):
@@ -143,7 +138,7 @@ def test_result_grande_e_truncado(updater):
     )
     prompt = llm.prompts[0]
     assert big_result not in prompt
-    assert "STATUS: falha" in prompt  # desfecho preservado no início
+    assert "STATUS: falha" in prompt
     assert "result truncated" in prompt
     assert str(len(big_result)) in prompt
 
@@ -215,4 +210,4 @@ def test_medicao_antes_depois_3_10_20kb():
             f"({estimate_tokens(after)} toks) redução={red:.1f}%"
         )
         assert len(after) < len(before) // 2
-        assert task.arguments["content"] == "x" * size  # intacto
+        assert task.arguments["content"] == "x" * size

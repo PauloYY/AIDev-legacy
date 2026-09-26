@@ -172,10 +172,6 @@ class FinalVerification:
         file_contents: dict[str, str] = {}
         symbols: dict[str, list[str]] = {}
 
-        # Etapa 3: leituras independentes (read_file + list_symbols são
-        # puras) podem rodar em paralelo; a montagem dos dicts continua
-        # em ordem de arquivo (determinístico). Qualquer outro caso usa
-        # o caminho sequencial legado.
         use_parallel = (
             len(limited_files) > 1 and Config.parallel_tools
         )
@@ -235,10 +231,10 @@ class FinalVerification:
         file_path: str,
         tools_execute,
     ) -> tuple[str | None, list[str]]:
-        """Lê conteúdo (+símbolos p/ .py) de UM arquivo.
+        """Lê conteúdo (+símbolos p/.py) de UM arquivo.
 
         Mesma lógica do loop sequencial legado, extraída para reúso
-        pelo batch paralelo (Etapa 3). Falhas por arquivo retornam
+        pelo batch paralelo. Falhas por arquivo retornam
         (None, []) como antes (erros são ignorados por arquivo).
         """
 

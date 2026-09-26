@@ -8,18 +8,15 @@ def test_empty_string():
 
 
 def test_none_returns_zero():
-    # None is coerced to empty string via `if not text`, returns 0
-    assert estimate_tokens(None) == 0  # type: ignore
+    assert estimate_tokens(None) == 0
 
 
 def test_short_text():
-    # "abc" = 3 chars -> min 1 token
     assert estimate_tokens("abc") == 1
 
 
 def test_english_text_approximation():
     text = "Hello world this is a test"
-    # 27 chars / 4 ≈ 6-7 tokens
     result = estimate_tokens(text)
     assert result >= 6
     assert result <= 8
@@ -27,7 +24,6 @@ def test_english_text_approximation():
 
 def test_portuguese_text_approximation():
     text = "Este é um texto em português para teste"
-    # ~40 chars / 4 ≈ 10 tokens
     result = estimate_tokens(text)
     assert result >= 9
     assert result <= 12

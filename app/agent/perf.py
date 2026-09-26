@@ -1,9 +1,4 @@
-"""Resumo de performance de uma run (Fase 3).
-
-Combina dados já coletados (UsageTracker p/ LLM e tools) com contadores
-do Runner. Não coleta nada sozinho — só formata. Sem conteúdo sensível:
-apenas contagens, tempos e tokens.
-"""
+"""Resumo de performance de uma run."""
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,16 +16,10 @@ class AgentStats:
     test_passed: int = 0
     test_failed: int = 0
     wall_ms: float = 0.0
-    # Etapa 3 (paralelismo): batches de operações independentes.
-    # parallel_ops = nº de operações que rodaram em batch;
-    # sequential_ops = nº que rodaram pelo caminho sequencial;
-    # parallel_saved_ms = soma(durações) − parede, por batch (estimativa).
     parallel_batches: int = 0
     parallel_ops: int = 0
     sequential_ops: int = 0
     parallel_saved_ms: float = 0.0
-    # Etapa 4: atualizações de resumo puladas por política (leituras
-    # puras). Não é erro nem falha — é chamada LLM evitada.
     summary_skipped: int = 0
 
 
@@ -65,11 +54,9 @@ def format_performance_summary(
 
     avg_lat, max_lat = _llm_latency(records)
 
-    # Etapa 4: latência total real (soma) + contagens por componente.
-    # Tudo derivado dos registros existentes; tolera trackers/fakes.
     total_lat_ms = 0.0
     comp_calls: dict[str, int] = {}
-    planner_retries = (0, 0, 0)  # (retries, short, full)
+    planner_retries = (0, 0, 0)
     try:
         comp_stats = usage.component_stats() if usage is not None else {}
     except (AttributeError, TypeError):
@@ -156,12 +143,12 @@ def format_performance_summary(
 
 
 def format_llm_component_section(usage=None) -> str:
-    """Seção por componente LLM (Etapa 4, aditiva).
+    """Seção por componente LLM (aditiva).
 
     Uma linha por componente com chamadas, prompt médio/máximo (chars),
     tokens reais de prompt e latência média/máxima. Fonte: registros
     reais do UsageTracker (tokens do provider quando informados).
-    Retorna "" sem registros — nunca quebra o resumo existente.
+    Retorna "" sem registros - nunca quebra o resumo existente.
     """
 
     try:

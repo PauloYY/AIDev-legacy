@@ -26,9 +26,6 @@ def _planner(tools):
         llm=MagicMock(), parser=DecisionParser(tools=tools), tools=tools)
 
 
-# --- Registration: no tool added or removed ----------------------------
-
-
 def test_all_three_tools_registered():
     names = {d["function"]["name"] for d in _registry().definitions}
     assert {"write_file", "edit_file", "delete_file"} <= names
@@ -54,20 +51,17 @@ def test_mutative_tools_outside_parallel_batches():
     assert all_pure_read(["edit_file", "delete_file"]) is False
 
 
-# --- Descriptions reflect create/rebuild vs localized vs remove --------
-
-
 def test_write_description_is_create_or_rebuild():
     desc = _registry().get("write_file").definition["function"]["description"]
-    assert "new file" in desc  # creates new files
-    assert "edit_file" in desc  # points to the localized alternative
+    assert "new file" in desc
+    assert "edit_file" in desc
 
 
 def test_edit_description_requires_existing_localized_change():
     tool = _registry().get("edit_file")
     desc = tool.definition["function"]["description"]
     assert "existing file" in desc
-    assert "write_file" in desc  # create => write_file; rewrite => write_file
+    assert "write_file" in desc
     assert "exactly once" in desc
     params = tool.definition["function"]["parameters"]
     assert params["required"] == [
@@ -87,9 +81,6 @@ def test_descriptions_stay_concise():
     for name in ("write_file", "edit_file", "delete_file"):
         desc = _registry().get(name).definition["function"]["description"]
         assert len(desc) <= 500, f"{name} description too long"
-
-
-# --- Planner receives the explicit policy (both templates) -------------
 
 
 def _prompts():
@@ -125,9 +116,6 @@ def test_planner_policy_is_preference_not_hard_rule():
         assert "preference" in prompt.lower()
 
 
-# --- Observability: existing tool_stats answers write/edit/delete ------
-
-
 def test_tool_stats_counts_each_tool_separately(projects_root):
     from app.tools.filesystem.delete_file import delete_file
     from app.tools.filesystem.edit_file import edit_file
@@ -150,7 +138,6 @@ def test_tool_stats_counts_each_tool_separately(projects_root):
     assert by_tool["edit_file"]["calls"] == 1
     assert by_tool["delete_file"]["calls"] == 1
 
-    # Sanity: direct functions unchanged by the policy task.
     assert write_file is not None
     assert edit_file is not None
     assert delete_file is not None

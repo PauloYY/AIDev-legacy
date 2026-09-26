@@ -43,7 +43,6 @@ UNCERTAIN = "uncertain"
 KEEP = "keep"
 
 
-# Arquivos com papel estrutural conhecido: nunca candidatos.
 SPECIAL_BASENAMES = frozenset({
     "readme", "readme.md", "readme.txt", "license", "license.md",
     "license.txt", "licence", "notice", "authors", "changelog",
@@ -62,7 +61,6 @@ SPECIAL_BASENAMES = frozenset({
     ".env.example",
 })
 
-# Manifestos/configurações cujo conteúdo pode citar outros arquivos.
 CONFIG_BASENAMES = frozenset({
     "package.json", "go.mod", "cargo.toml", "pyproject.toml",
     "requirements.txt", "pom.xml", "build.gradle", "gemfile",
@@ -70,13 +68,10 @@ CONFIG_BASENAMES = frozenset({
     "docker-compose.yaml", "pytest.ini", "tox.ini", "tsconfig.json",
 })
 
-# Diretórios de estado interno: nunca candidatos.
 SPECIAL_DIR_PARTS = frozenset({".aidev"})
 
-# Arquivos de teste: evidência de necessidade por si só.
 TEST_DIR_PARTS = frozenset({"test", "tests", "spec", "specs", "__tests__"})
 
-# Basenames que sugerem ponto de entrada.
 ENTRYPOINT_BASENAMES = frozenset({
     "main.py", "main.js", "main.ts", "main.go", "main.c", "main.cpp",
     "main.java", "main.rb", "main.php",
@@ -85,7 +80,6 @@ ENTRYPOINT_BASENAMES = frozenset({
     "__main__.py", "__init__.py",
 })
 
-# Sinais positivos de "temporário gerado durante desenvolvimento".
 TEMP_SUFFIXES = frozenset({
     ".tmp", ".temp", ".bak", ".orig", ".swp", ".swo", ".log", ".pyc",
     ".rej",
@@ -93,7 +87,6 @@ TEMP_SUFFIXES = frozenset({
 TEMP_STEM_PREFIXES = ("tmp_", "temp_", "scratch_", "debug_")
 TEMP_DIR_PARTS = frozenset({"tmp", "temp", "scratch"})
 
-# Sinais positivos de "antigo claramente substituído".
 SUPERSEDED_STEM_PREFIXES = (
     "old_", "backup_", "bak_", "deprecated_", "copy_of_",
 )
@@ -101,7 +94,6 @@ SUPERSEDED_STEM_SUFFIXES = (
     "_old", "_backup", "_bak", "_orig", "_copy", "_deprecated",
 )
 
-# Sem esses sinais positivos, ausência de referência => UNCERTAIN.
 MAX_SAFE_DELETIONS_PER_SCAN = 10
 
 
@@ -243,7 +235,6 @@ def _imported_by_map(
             if not module:
                 continue
             if module.startswith((".", "/")):
-                # Import relativo: resolve contra o diretório do importer.
                 base = PurePosixPath(importer).parent.joinpath(module)
                 text = str(base)
                 for cand in (
@@ -334,7 +325,6 @@ def analyze_unnecessary_files(
         except Exception:
             contents[path] = None
 
-    # Duplicatas exatas (hash do conteúdo legível).
     hash_groups: dict[str, list[str]] = {}
     for path in files:
         content = contents.get(path)
@@ -346,12 +336,10 @@ def analyze_unnecessary_files(
     imported_by = _imported_by_map(files, contents)
     substring_refs = _substring_references(files, contents)
 
-    # Conteúdo agregado dos manifestos p/ checagem "listado em config".
     config_paths = [
         f for f in files if _basename(f).lower() in CONFIG_BASENAMES
     ]
 
-    # Primeira passada: vereditos KEEP (evidência de necessidade).
     keep: set[str] = set()
     keep_evidence: dict[str, list[str]] = {f: [] for f in files}
 
@@ -390,7 +378,6 @@ def analyze_unnecessary_files(
                     f"mentioned in config ({config})"
                 )
 
-    # Segunda passada: candidatos (não-KEEP) + classificação.
     for path in files:
         if path in keep:
             continue

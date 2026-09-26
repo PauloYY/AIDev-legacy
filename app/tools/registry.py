@@ -14,7 +14,6 @@ DEFAULT_TOOLS = [
     *ANALYSIS_TOOLS,
 ]
 
-# Métricas (Fase 3): limites para não registrar conteúdo sensível/grande.
 _MAX_COMMAND_CHARS = 200
 _EXIT_CODE_RE = re.compile(r"exit code (-?\d+)")
 
@@ -35,8 +34,6 @@ def _summarize_command(arguments: dict[str, Any]) -> str | None:
 class ToolRegistry:
     def __init__(self, tracker=None):
         self._tools: dict[str, Tool] = {}
-        # Fase 3: tracker opcional (UsageTracker). None = sem overhead de
-        # métricas além do cronômetro; comportamento inalterado.
         self._tracker = tracker
 
     def set_tracker(self, tracker) -> None:

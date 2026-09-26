@@ -105,7 +105,6 @@ def test_delete_schema_validation():
     with pytest.raises(ValueError):
         validator.validate(registry.get("delete_file"), {
             "project_name": "p",
-            # missing file_path
         })
 
 

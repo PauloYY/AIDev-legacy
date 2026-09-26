@@ -11,7 +11,7 @@ def extract_json_object(content: str) -> str:
     """Torna o parsing de JSON tolerante a variações comuns de saída de LLM.
 
     Modelos (especialmente os menores/gratuitos) frequentemente:
-    - envolvem o JSON num bloco de código markdown (```json ... ```);
+    - envolvem o JSON num bloco de código markdown (```json... ```);
     - adicionam texto explicativo antes ou depois do JSON, mesmo quando
       instruídos a retornar "somente JSON".
 

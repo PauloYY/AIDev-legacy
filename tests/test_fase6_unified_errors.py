@@ -1,9 +1,4 @@
-"""Fase 6 — Unified Error Analysis (1 análise → N consumidores).
-
-Unificado (fatos determinísticos + 1 LLM call), checklist como
-projeção sem LLM própria, Planner/Executor com files/cause/fix,
-fallback determinístico, contagem de chamadas e regressão das flags.
-"""
+"""Unified Error Analysis (1 análise → N consumidores)."""
 
 import json
 
@@ -148,10 +143,6 @@ def _events(trace, name):
     return [e for e in trace.read_events() if e["event"] == name]
 
 
-# --------------------------------------------------------------------------
-# Unified analysis
-# --------------------------------------------------------------------------
-
 def test_zero_errors_empty_no_call():
     unified = UnifiedErrorAnalyzer(
         llm=_ScriptedLLM(content="{}")).analyze("pytest", PASS)
@@ -174,7 +165,6 @@ def test_single_failure_one_call():
     assert "discount" in first.probable_cause
     assert "Cart.total" in first.suggested_solution
     assert first.affected_files == ["test_cart.py"]
-    # Fatos determinísticos junto (código, não LLM).
     assert len(unified.failures) == 2
     assert unified.failures[0].test == "test_cart.py::test_total"
     assert unified.exit_code == 1
@@ -225,7 +215,6 @@ def test_invalid_responses_fall_back(bad, reason):
     unified = UnifiedErrorAnalyzer(llm=llm).analyze("pytest", FAIL_2)
     assert unified.fallback_used is True
     assert unified.error == reason
-    # Fallback determinístico ainda extrai os 2 fatos como problemas.
     assert len(unified.problems) == 2
     assert unified.problems[0].probable_cause == "unknown"
     assert len(unified.checklist_items) == 2
@@ -237,7 +226,7 @@ def test_llm_error_falls_back_without_invention():
     unified = UnifiedErrorAnalyzer(llm=llm).analyze("pytest", FAIL_2)
     assert unified.fallback_used is True
     assert unified.error == "llm_error: TimeoutError"
-    assert unified.llm_calls == 1  # tentou 1x, sem retry em loop
+    assert unified.llm_calls == 1
     assert len(unified.problems) == 2
 
 
@@ -258,10 +247,6 @@ def test_llm_none_deterministic_only():
     assert len(unified.checklist_items) == 2
 
 
-# --------------------------------------------------------------------------
-# Checklist como projeção
-# --------------------------------------------------------------------------
-
 def test_apply_unified_from_problems():
     from app.agent.context.error_checklist import ErrorChecklist
     llm = _ScriptedLLM(content=_analysis_json())
@@ -271,11 +256,10 @@ def test_apply_unified_from_problems():
     assert checklist.pending_count == 2
     rendered = checklist.render()
     assert "test_total" in rendered
-    assert "test_cart.py" in rendered  # files na projeção
-    # Sem nenhuma chamada LLM própria do checklist.
+    assert "test_cart.py" in rendered
     assert [c for c in llm.calls
             if c["component"] == "ErrorChecklist"] == []
-    assert len(llm.calls) == 1  # só a unificada
+    assert len(llm.calls) == 1
 
 
 def test_apply_unified_from_failures_only():
@@ -309,24 +293,18 @@ def test_deterministic_projection_no_llm():
     assert checklist._items[0].command == "pytest"
 
 
-# --------------------------------------------------------------------------
-# Contagem de chamadas (o critério 2→1)
-# --------------------------------------------------------------------------
-
 def test_four_errors_cost_one_analysis_call():
     llm = _ScriptedLLM(content=json.dumps({"problems": [
         {"error": f"FAILED t{i}.py::test_{i}"} for i in range(4)]}))
     lines = "\n".join(f"FAILED t{i}.py::test_{i}" for i in range(4))
     unified = UnifiedErrorAnalyzer(llm=llm).analyze(
         "pytest", f"STATUS: falha\n{lines}")
-    total_analysis_calls = len(llm.calls)  # checklist: 0 + analyzer: 1
+    total_analysis_calls = len(llm.calls)
     assert total_analysis_calls == 1
     assert len(unified.problems) == 4
 
 
 def test_runner_level_single_analysis_call(tmp_path):
-    # Fluxo completo: 1 resultado com 2 falhas → UMA chamada de
-    # análise; o ErrorChecklist NUNCA chama LLM (ausente do usage).
     from app.agent.context.error_checklist import ErrorChecklist
 
     class _Provider:
@@ -354,7 +332,7 @@ def test_runner_level_single_analysis_call(tmp_path):
     planner = T.FakePlanner(
         [_task_decision(fail), _task_decision(fix),
          _task_decision(fail), _finish()])
-    planner.llm = llm  # só o unified analyzer consome este provider
+    planner.llm = llm
     runner = Runner(
         planner=planner,
         task_decision_maker=T.FakeTaskDecisionMaker(
@@ -373,7 +351,7 @@ def test_runner_level_single_analysis_call(tmp_path):
         execution_trace=trace,
     )
     assert runner.run(objective="obj", project_name="p") == "done"
-    assert provider._contents == []  # exatamente 1 turno consumido
+    assert provider._contents == []
     components = [r.component for r in llm.usage.get_records()]
     assert components == ["ErrorAnalyzer"]
     assert len(runner.task_state.problems) == 2
@@ -394,15 +372,9 @@ def test_unified_feeds_finish_gate(tmp_path):
          _exec_for(fail)],
         trace, tools=tools,
         error_checklist=ErrorChecklist(_ScriptedLLM()))
-    # 1º finish bloqueado pelo error gate (projeção tem pendências);
-    # após fixes + verde, o 2º passa.
     assert runner.run(objective="obj", project_name="p") == "b"
     assert runner._stats.finish_blocks == 1
 
-
-# --------------------------------------------------------------------------
-# Planner recebe files/cause/fix (compacto)
-# --------------------------------------------------------------------------
 
 def test_planner_receives_structured_problems():
     seen = []
@@ -444,7 +416,7 @@ def test_planner_context_stays_compact():
     block = state.render_compact(include_objective=False,
                                  original_ref_chars=0)
     assert len(block) < 6000
-    assert block.count("cause:") == 8  # janela de detalhe
+    assert block.count("cause:") == 8
     assert "[+2 more]" in block
 
 
@@ -466,10 +438,6 @@ def test_executor_gets_detail_without_raw_output():
     assert "STDOUT" not in detail and "Traceback" not in detail
 
 
-# --------------------------------------------------------------------------
-# Fallback no Runner (agent continua, sem invenção, sem deadlock)
-# --------------------------------------------------------------------------
-
 @pytest.mark.parametrize("bad", [
     "not json", "", None,
     json.dumps({"problems": []}),
@@ -484,7 +452,6 @@ def test_runner_fallback_variants(tmp_path, bad):
                      [_exec_for(fail)], trace, tools=tools)
     runner.planner.llm = llm
     assert runner.run(objective="obj", project_name="p") == "done"
-    # Fallback determinístico: 2 problemas sem causa inventada.
     assert len(runner.task_state.problems) == 2
     assert all(p.probable_cause == "unknown"
                for p in runner.task_state.problems)
@@ -507,10 +474,6 @@ def test_runner_timeout_fallback(tmp_path):
     assert completed[0]["fallback"] is True
     assert "TimeoutError" in completed[0]["error"]
 
-
-# --------------------------------------------------------------------------
-# Persistência dos novos campos + trace
-# --------------------------------------------------------------------------
 
 def test_structured_persist_roundtrip(projects_root, tmp_path,
                                       monkeypatch):

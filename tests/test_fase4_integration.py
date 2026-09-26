@@ -1,10 +1,5 @@
-"""Fase 4 (integração) — as 5 evoluções: contexto, canonical
-objective, PT-ASCII, plan sync e persistência.
-
-Isolamento: persistência desligada por padrão neste arquivo (contagens
-determinísticas); testes de persistência ligam explicitamente com
-diretório temporário.
-"""
+"""As 5 evoluções: contexto, canonical
+objective, PT-ASCII, plan sync e persistência."""
 
 import json
 
@@ -39,10 +34,6 @@ def _no_disk_persistence(monkeypatch):
     monkeypatch.setattr(Config, "task_state_persist", False)
 
 
-# --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
-
 def _task(tool, arguments, dependencies=None):
     return Task(tool=tool, arguments=arguments,
                 dependencies=dependencies or [])
@@ -61,7 +52,6 @@ class _ScriptedLLM:
         self.content = content
         self.error = error
         self.calls = []
-        # Runner lê planner.llm.usage no finish (só métrica).
         self.usage = T.FakeLLM.usage
 
     def generate(self, messages, component=None, iteration=None,
@@ -105,10 +95,6 @@ def _events(trace, name):
     return [e for e in trace.read_events() if e["event"] == name]
 
 
-# --------------------------------------------------------------------------
-# Canonicalização PT-ASCII
-# --------------------------------------------------------------------------
-
 @pytest.mark.parametrize("prompt", [
     "crie um sistema de cadastro de clientes",
     "faca uma api para controlar tarefas",
@@ -149,9 +135,8 @@ def test_pt_ascii_flag_off_restores_accent_only(monkeypatch):
     result = PromptCanonicalizer(llm=llm).canonicalize(ascii_pt)
     assert result.llm_calls == 0
     assert result.translation_applied is False
-    assert result.language == "pt"  # detectado, não traduzido
+    assert result.language == "pt"
     assert result.canonical_prompt == ascii_pt
-    # Acentos continuam traduzindo com a flag desligada.
     llm2 = _ScriptedLLM(content="Create a valid system now.")
     accented = "Crie um sistema válido agora."
     result2 = PromptCanonicalizer(llm=llm2).canonicalize(accented)
@@ -183,10 +168,6 @@ def test_translator_prompt_forbids_planning():
     assert "Preserve verbatim" in sent
 
 
-# --------------------------------------------------------------------------
-# TaskState: render params, canonical_objective, task_id, sync_plan
-# --------------------------------------------------------------------------
-
 def test_render_compact_without_objective():
     state = TaskState(objective="Build X", requirements=[],
                       canonical_prompt="Build X")
@@ -205,7 +186,7 @@ def test_render_compact_original_ref():
                                original_ref_chars=12)
     assert "ORIGINAL:" in out
     assert "Crie o X" in out
-    assert "agora mesmo" not in out  # truncado com marcador
+    assert "agora mesmo" not in out
 
 
 def test_canonical_objective_property():
@@ -232,25 +213,20 @@ def test_sync_plan_lifecycle():
         (1, "pending"), (2, "pending"), (3, "pending")]
     assert [i.item_id for i in state.plan] == [
         "checklist-1", "checklist-2", "checklist-3"]
-    # Início: primeiro pendente vira in_progress.
     state.sync_plan([(1, False), (2, False), (3, False)],
                     blocked=False, started=True)
     assert state.plan[0].status == "in_progress"
-    # Conclusão via checklist.
     state.sync_plan([(1, True), (2, False), (3, False)],
                     blocked=False, started=True)
     assert state.plan[0].status == "completed"
     assert state.plan[0].done is True
     assert state.plan[1].status == "in_progress"
-    # Falha: bloqueia o atual.
     state.sync_plan([(1, True), (2, False), (3, False)],
                     blocked=True, started=True)
     assert state.plan[1].status == "blocked"
-    # Correção: desbloqueia sem concluir.
     state.sync_plan([(1, True), (2, False), (3, False)],
                     blocked=False, started=True)
     assert state.plan[1].status == "in_progress"
-    # Idempotente: segunda sincronização não muda nada.
     before = state.to_dict()
     state.sync_plan([(1, True), (2, False), (3, False)],
                     blocked=False, started=True)
@@ -281,10 +257,6 @@ def test_plan_item_defaults():
     assert item.done is False
     assert item.item_id == ""
 
-
-# --------------------------------------------------------------------------
-# Planner: recebe TASK STATE + canonical objective
-# --------------------------------------------------------------------------
 
 def test_planner_receives_task_state():
     seen = []
@@ -331,7 +303,6 @@ def test_planner_receives_canonical_objective():
     objective, context = seen[0]
     assert objective == "Create a valid notes application."
     assert "TASK STATE:" in context
-    # Original acessível, não descartado.
     assert "Crie um aplicativo" in context
     assert runner.task_state.original_prompt.startswith("Crie um")
 
@@ -361,7 +332,7 @@ def test_no_unnecessary_duplication_in_planner_context():
     assert "CONTEUDO-INTEGRAL" not in block
     assert "TASK PAI:" not in block
     assert "STDOUT" not in block
-    assert len(block) < 3000  # semântico + referências, não evidência
+    assert len(block) < 3000
 
 
 def test_context_flag_off_preserves_legacy(monkeypatch):
@@ -404,14 +375,9 @@ def test_canonical_flag_off_keeps_original(monkeypatch):
     runner = _runner([], [], NullTrace(), planner=planner)
     runner.run(objective="Crie um aplicativo de notas válido",
                project_name="p")
-    # Estado canonicaliza, mas o Planner recebe o original.
     assert seen == ["Crie um aplicativo de notas válido"]
     assert runner.task_state.translation_applied is True
 
-
-# --------------------------------------------------------------------------
-# Executor: recebe TASK STATE
-# --------------------------------------------------------------------------
 
 def test_executor_receives_task_state():
     seen = []
@@ -452,10 +418,6 @@ def test_executor_without_state_gets_intact_context(monkeypatch):
     assert seen == ["task context"]
 
 
-# --------------------------------------------------------------------------
-# Checklist ↔ plan (integração com checklist real)
-# --------------------------------------------------------------------------
-
 def test_plan_syncs_with_real_checklist(tmp_path):
     llm = _ScriptedLLM(content=json.dumps({"items": ["step one",
                                                       "step two"]}))
@@ -485,10 +447,6 @@ def test_plan_sync_flag_off_keeps_plan_empty(monkeypatch):
     assert runner.task_state.plan == []
 
 
-# --------------------------------------------------------------------------
-# Persistência
-# --------------------------------------------------------------------------
-
 def _persist_on(monkeypatch):
     monkeypatch.setattr(Config, "task_state_persist", True)
 
@@ -517,7 +475,7 @@ def test_load_missing_or_invalid_returns_none(projects_root,
     bad.write_text("{json invalido", encoding="utf-8")
     assert load_task_state("p") is None
     bad.write_text(json.dumps({"objective": "x"}), encoding="utf-8")
-    assert load_task_state("p") is None  # sem task_id
+    assert load_task_state("p") is None
 
 
 def test_different_task_archives_old_state(projects_root, monkeypatch):
@@ -552,7 +510,6 @@ def test_unchanged_state_is_not_rewritten(projects_root, monkeypatch):
     assert save_task_state(state, "p")["ok"] is True
     path = state_path_for_project("p")
     first = path.stat().st_mtime_ns
-    # Runner não reescreve sem mudança (assinatura igual).
     runner = _runner([_finish()], [], NullTrace())
     runner._task_state_project = "p"
     runner.task_state = state
@@ -567,10 +524,6 @@ def test_atomic_write_leaves_no_tmp(projects_root, monkeypatch):
     leftovers = list(state_path_for_project("p").parent.glob("*.tmp"))
     assert leftovers == []
 
-
-# --------------------------------------------------------------------------
-# Runner: init/persist/restore/trace/erros
-# --------------------------------------------------------------------------
 
 def test_state_initialized_persisted_and_traced(projects_root, tmp_path,
                                                 monkeypatch):
@@ -602,7 +555,6 @@ def test_same_task_restores_state(projects_root, tmp_path, monkeypatch):
     first = _run_once()
     assert len(first.task_state.decisions) == 2
     second = _run_once()
-    # Estado restaurado acumula (2 decisões da run anterior + 2 novas).
     assert len(second.task_state.decisions) == 4
 
 
@@ -645,8 +597,6 @@ def test_task_state_update_event_shape(projects_root, tmp_path,
 def test_persist_failure_does_not_break_run(tmp_path, monkeypatch):
     _persist_on(monkeypatch)
     runner = _runner([_finish()], [], NullTrace())
-    # ".." escapa do diretório de projetos → save falha sempre,
-    # mas a run continua e o estado em memória existe.
     assert runner.run(objective="obj", project_name="../fora") == "done"
     assert runner.task_state is not None
 
@@ -678,7 +628,7 @@ def test_all_flags_off_restores_legacy(projects_root, tmp_path,
     assert runner.run(objective="Crie um app válido",
                       project_name="p") == "done"
     objective, context = seen[0]
-    assert objective == "Crie um app válido"  # original, sem tradução
+    assert objective == "Crie um app válido"
     assert "TASK STATE:" not in context
     assert runner.task_state.plan == []
     assert not (tmp_path / "p" / ".aidev" / "task_state.json").exists()

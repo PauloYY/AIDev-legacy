@@ -34,26 +34,10 @@ class OperationalMemory:
     MAX_ACTIONS = 20
     MAX_RESULT_CHARS = 300
     MAX_FILES_LISTED = 300
-    # Etapa 2C: limite seguro para valores de argumentos exibidos no
-    # histórico. Impede que uma ação individual insira dezenas de KB
-    # no contexto do Planner (ex.: write_file com 10-50 KB). Só afeta
-    # a REPRESENTAÇÃO do histórico — os argumentos reais do Executor
-    # continuam intactos em ActionRecord.arguments.
     MAX_ARG_VALUE_CHARS = 200
 
-    # A cada quantas iterações uma investigação avulsa (read_file/
-    # list_files/find_references como task principal, fora do passe
-    # livre pós-falha de teste/build) é liberada. Isso convive com a
-    # exceção de last_run_command_failed_test_or_build() — não a
-    # substitui: mesmo dentro da janela "sem orçamento", uma falha de
-    # teste/build ainda libera investigação normalmente.
     INVESTIGATION_BUDGET_PERIOD = 5
 
-    # Palavras-chave usadas tanto para lembrar o comando de teste/build
-    # que funcionou quanto para o gate de "libera read_file solo logo
-    # após um teste falhar". "test"/"build" sozinhos não bastam —
-    # runners populares como jest, mocha, pytest (via "test" mas
-    # cobrindo por garantia) não contêm essas substrings.
     TEST_COMMAND_KEYWORDS = (
         "test", "jest", "mocha", "vitest", "pytest", "rspec",
         "phpunit", "karma", "jasmine", "spec", "tox",
@@ -175,8 +159,6 @@ class OperationalMemory:
     def render(
         self, project_name: str, files_text: str | None = None
     ) -> str:
-        # files_text (Etapa 4): listagem pré-computada (ex.: compacta
-        # "sem alterações"). None = comportamento legado integral.
         files_section = (
             files_text
             if files_text is not None
@@ -217,33 +199,19 @@ class OperationalMemory:
             return "No actions executed yet in this run."
         return "\n".join(self._format_action(a) for a in self._actions)
 
-    # ---------- Etapa 5: janela de histórico com preservação ----------
 
-    # Política de janela (justificativa, não número mágico):
-    # o Planner decide a PRÓXIMA ação a partir de (a) estado atual
-    # (arquivos/summary/checklists, sempre integrais) + (b) causalidade
-    # recente (o que foi feito e o que resultou) + (c) falhas que ainda
-    # exigem correção. Cada task típica gera 1-3 registros (task +
-    # 0-2 dependencies); 8 ações ≈ 3-4 ciclos completos decidir→
-    # executar→observar, suficiente para detectar repetição imediata,
-    # entender a última mudança e o último teste. Sucessos antigos já
-    # estão materializados no estado atual (arquivos no disco, resumo,
-    # checklist marcado) — reenviá-los é duplicação. Falhas antigas
-    # fora da janela são preservadas explicitamente abaixo, porque um
-    # erro não corrigido continua relevante mesmo depois de outras
-    # ações.
     MAX_HISTORY_RENDERED_COMPACT = 8
     MAX_OLDER_FAILURES_KEPT = 2
 
     def render_history_compact(self) -> str:
-        """Últimas N ações + falhas antigas preservadas (Etapa 5).
+        """Últimas N ações + falhas antigas preservadas.
 
         Nunca remove: ações recentes (causalidade imediata), a falha
         mais recente fora da janela (pode explicar o estado atual) e
         o último teste/build com falha (o que precisa ser corrigido).
         Remove: sucessos antigos já refletidos no estado atual
         (arquivos/resumo/checklist). Retorna também linha de omissão
-        explícita com a contagem — nunca omite silenciosamente.
+        explícita com a contagem - nunca omite silenciosamente.
         """
         if not self._actions:
             return "No actions executed yet in this run."
@@ -255,9 +223,6 @@ class OperationalMemory:
         lines = [self._format_action(a) for a in window]
 
         if older:
-            # Falhas fora da janela que ainda importam: as mais
-            # recentes primeiro, priorizando run_command de teste/build
-            # (o que bloqueia finish) e depois qualquer falha.
             older_failures = [a for a in older if not a.success]
             kept: list = []
             test_failures = [
@@ -285,11 +250,11 @@ class OperationalMemory:
     def render_compact(
         self, project_name: str, files_text: str | None = None
     ) -> str:
-        """Bloco de memória compacto (Etapa 5).
+        """Bloco de memória compacto.
 
         Mesmas seções de render(), com histórico em janela
         (render_history_compact). Lista de arquivos, comandos
-        conhecidos e formato geral inalterados — só o volume do
+        conhecidos e formato geral inalterados - só o volume do
         histórico muda. `render()` legado segue intacto.
         """
         files_section = (
@@ -319,12 +284,12 @@ class OperationalMemory:
     def render_files_state(
         self, project_name: str, last_state: str | None = None
     ) -> tuple[str, str | None]:
-        """Listagem estrutural com detecção de mudança (Etapa 4).
+        """Listagem estrutural com detecção de mudança.
 
         Retorna (texto, estado). O estado é o hash da listagem
         COMPLETA ordenada (content-addressed): se nada mudou desde
         `last_state`, o texto é uma linha compacta explícita em vez
-        da lista integral — o Planner continua sabendo quantos
+        da lista integral - o Planner continua sabendo quantos
         arquivos existem e que a estrutura está intacta. Mudanças de
         CONTEÚDO com o mesmo conjunto de paths não alteram o estado
         (a lista nunca teve conteúdos); essas chegam ao Planner via
@@ -375,7 +340,7 @@ class OperationalMemory:
     ) -> str:
         """Representação compacta dos argumentos para o histórico.
 
-        Regra principal (Etapa 2C): o histórico registra O QUE aconteceu,
+        Regra principal: o histórico registra O QUE aconteceu,
         não repete o conteúdo inteiro do que foi escrito.
 
         - write_file.content NUNCA aparece (vira "<omitted: N chars>").
@@ -417,7 +382,6 @@ class OperationalMemory:
                     compact[key] = value
                 continue
 
-            # Não-string: preserva se o repr for pequeno, senão resume.
             try:
                 rep = repr(value)
             except Exception:

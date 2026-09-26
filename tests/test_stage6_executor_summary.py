@@ -1,18 +1,4 @@
-"""Etapa 6 — eficiência do Executor + SummaryUpdater.
-
-Cobre os 18 casos obrigatórios sem alterar nenhum teste existente
-(um teste da Etapa 4 pinou compact_executor=False para preservar as
-asserções originais; aqui a política nova é verificada):
-1-4.   Executor compacto preserva decisão/args/dependências/restrições.
-5.     Sem schemas no Executor; resultados de dependency com cap seguro.
-6-8.   Updater recebe contexto suficiente; skips permitidos; estado
-       preservado de forma determinística (pular = manter, nunca fabrica).
-9-11.  Erros, resultados de teste e exit codes continuam disponíveis.
-12-13. Duplicação reduzida; outputs grandes compactados com marcador.
-14-15. Short repair e full retry intactos com a flag ligada.
-16-17. Finish gate e final verification intactos com a flag ligada.
-18.    Flag desligada recupera o comportamento da Etapa 5.
-"""
+"""Eficiência do Executor + SummaryUpdater."""
 
 import json
 
@@ -37,10 +23,6 @@ from app.llm.client import LLMClient
 from app.llm.models import LLMResponse, Usage
 from app.tools.registry import ToolRegistry
 
-
-# --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
 
 def _task(tool, arguments, dependencies=None):
     return Task(tool=tool, arguments=arguments,
@@ -118,7 +100,6 @@ def _runner(decisions, executions, trace, **overrides):
     )
 
 
-# Restrições normativas do Executor que nunca podem sumir.
 EXECUTOR_CONSTRAINTS = [
     "ONLY valid JSON",
     "Do NOT execute tools",
@@ -130,10 +111,6 @@ EXECUTOR_CONSTRAINTS = [
     "full file content",
 ]
 
-
-# --------------------------------------------------------------------------
-# 1-4. executor compacto preserva decisão
-# --------------------------------------------------------------------------
 
 def test_compact_executor_preserves_decision():
     """Caso 1: tool + objetivo vão integrais no prompt compacto."""
@@ -180,10 +157,6 @@ def test_compact_executor_preserves_constraints():
     assert '"tool": "read_file"' in prompt
 
 
-# --------------------------------------------------------------------------
-# 5. sem schemas desnecessários; cap seguro
-# --------------------------------------------------------------------------
-
 def test_executor_needs_no_tool_schemas():
     """Caso 5: Executor não recebe schemas (só a tool da task)."""
     task = _task("write_file", {"project_name": "p",
@@ -217,14 +190,9 @@ def test_dependency_results_capped_safely(monkeypatch):
     assert len(out_legacy) > len(out)
     assert len(out_legacy) < 5000
 
-    # None = integral explícito, mesmo com a flag ligada.
     monkeypatch.setattr(Config, "compact_executor", True)
     assert big in TaskContextBuilder().build(task, [big])
 
-
-# --------------------------------------------------------------------------
-# 6-8. summary updater: contexto, skips, estado determinístico
-# --------------------------------------------------------------------------
 
 def test_updater_receives_enough_context():
     """Caso 6: objetivo+resumo+task+resultado chegam ao updater."""
@@ -246,7 +214,6 @@ def test_updater_receives_enough_context():
     assert "resumo vigente aqui" in prompt
     assert "a.py" in prompt
     assert "STATUS: success (exit code 0)" in prompt
-    # Conteúdo gigante não vai integral (política da Etapa 2D).
     assert "x" * 5000 not in prompt
 
 
@@ -264,7 +231,7 @@ def test_updater_receives_enough_context():
 ])
 def test_updater_skipped_when_allowed(tmp_path, monkeypatch, tool,
                                       arguments, reason):
-    """Caso 7: skips sem mudança de estado (Etapas 4+6)."""
+    """Caso 7: skips sem mudança de estado."""
     monkeypatch.setattr(Config, "smart_summary", True)
     monkeypatch.setattr(Config, "compact_executor", True)
     trace = _trace(tmp_path)
@@ -312,10 +279,6 @@ def test_updater_still_called_for_state_changes(
     assert _events(trace, "summary_skipped") == []
 
 
-# --------------------------------------------------------------------------
-# 9-11. erros, testes e exit codes disponíveis
-# --------------------------------------------------------------------------
-
 def test_errors_tests_exit_codes_available(monkeypatch):
     """Casos 9-11: veredito integral no contexto do Executor."""
     monkeypatch.setattr(Config, "compact_executor", True)
@@ -337,10 +300,6 @@ def test_errors_tests_exit_codes_available(monkeypatch):
     assert "exit code 1" in prompt
     assert "FAILED test_cart.py::test_total" in prompt
 
-
-# --------------------------------------------------------------------------
-# 12-13. deduplicação + outputs grandes
-# --------------------------------------------------------------------------
 
 def test_duplicated_info_is_reduced():
     """Caso 12: compacto < integral sem perder decisão nem contexto."""
@@ -375,10 +334,6 @@ def test_big_outputs_compacted_with_marker(monkeypatch):
     assert "chars omitted" in out
     assert len(out) < 2500
 
-
-# --------------------------------------------------------------------------
-# 14-15. short repair e full retry com a flag ligada
-# --------------------------------------------------------------------------
 
 def _real_executor_runner(exec_provider_contents, updater_contents,
                           executions, trace, tools, monkeypatch=None):
@@ -440,11 +395,11 @@ def test_short_repair_still_works_with_compact_executor(
     args = {"project_name": "p", "file_path": "a.py", "content": "x = 1\n"}
     trace = _trace(tmp_path)
     runner = _real_executor_runner(
-        ([  # planner: inválida -> short repair resolve
+        ([
             "não-json {{{",
             _write_json("write_file", args),
             json.dumps({"action": "finish", "content": "done"}),
-        ], [  # executor: decisão direta
+        ], [
             _write_task_json("write_file", args),
         ]),
         ["resumo novo"],
@@ -464,7 +419,7 @@ def test_full_retry_still_works_with_compact_executor(
     args = {"project_name": "p", "file_path": "a.py", "content": "x = 1\n"}
     trace = _trace(tmp_path)
     runner = _real_executor_runner(
-        ([  # planner: 2 inválidas -> short + full
+        ([
             "ruim 1 {{{",
             "ruim 2 }}}",
             _write_json("write_file", args),
@@ -490,10 +445,10 @@ def test_executor_retry_still_works_with_compact_prompt(
     args = {"project_name": "p", "file_path": "a.py", "content": "x = 1\n"}
     trace = _trace(tmp_path)
     runner = _real_executor_runner(
-        ([  # planner
+        ([
             _write_json("write_file", args),
             json.dumps({"action": "finish", "content": "done"}),
-        ], [  # executor: 1ª inválida (tool trocada), 2ª ok
+        ], [
             _write_task_json("read_file", {"project_name": "p",
                                            "file_path": "a.py"}),
             _write_task_json("write_file", args),
@@ -505,10 +460,6 @@ def test_executor_retry_still_works_with_compact_prompt(
     assert runner.run(objective="obj", project_name="p") == "done"
     assert len(_events(trace, "executor_error")) == 1
 
-
-# --------------------------------------------------------------------------
-# 16-17. finish gate e final verification com a flag ligada
-# --------------------------------------------------------------------------
 
 def test_finish_gate_still_blocks_with_compact_executor(
         tmp_path, monkeypatch):
@@ -551,10 +502,6 @@ def test_final_verification_receives_summary_with_compact_executor(
     assert len(final.verify_calls) == 1
 
 
-# --------------------------------------------------------------------------
-# 18. flag off recupera o comportamento da Etapa 5
-# --------------------------------------------------------------------------
-
 def test_disabling_compact_executor_restores_legacy(monkeypatch):
     """Caso 18: flag off = prompt integral + cap 4000 + updater p/ tudo."""
     monkeypatch.setattr(Config, "compact_executor", False)
@@ -562,11 +509,9 @@ def test_disabling_compact_executor_restores_legacy(monkeypatch):
 
     task = _task("write_file", {"project_name": "p",
                                 "file_path": "a.py", "content": "x"})
-    # Prompt do Executor volta ao integral.
     assert (TaskDecisionMaker._build_prompt("obj", task, "ctx")
             != TaskDecisionMaker._build_prompt_compact("obj", task, "ctx"))
 
-    # Builder volta ao cap 4000 da Etapa 4.
     big = "y" * 6000
     dep = Dependency(tool="read_file",
                      arguments={"project_name": "p",
@@ -574,9 +519,8 @@ def test_disabling_compact_executor_restores_legacy(monkeypatch):
     out = TaskContextBuilder(max_result_chars=4000).build(
         _task("write_file", {"project_name": "p"},
               dependencies=[dep]), [big])
-    assert len(out) > 3000  # cap 4000, não 2000
+    assert len(out) > 3000
 
-    # Runner: check_project e inspect voltam a atualizar o resumo.
     runner = _runner([], [], NullTrace(),
                      operational_memory=OperationalMemory(
                          T.FakeToolRegistry()))
@@ -585,7 +529,6 @@ def test_disabling_compact_executor_restores_legacy(monkeypatch):
     assert runner._summary_skip_reason(
         "run_command",
         {"project_name": "p", "command": "ls"}) is None
-    # Reads continuam pulando (Etapa 4 congelada).
     assert runner._summary_skip_reason(
         "read_file",
         {"project_name": "p", "file_path": "a.py"}) == (

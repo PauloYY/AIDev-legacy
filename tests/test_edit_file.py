@@ -166,5 +166,4 @@ def test_edit_schema_validation():
             "project_name": "p",
             "file_path": "a.py",
             "old_text": "x",
-            # missing new_text
         })

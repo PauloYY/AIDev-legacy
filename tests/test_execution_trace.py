@@ -1,10 +1,4 @@
-"""Fase 3 — trace persistente e estruturado de execução (observabilidade).
-
-Cobre: criação do trace, escrita de eventos, run_id consistente,
-iteração, planner retry, executor error, teste sucesso/falha, finish
-block, FinalVerification, não-armazenamento de conteúdo sensível e
-resiliência da escrita (nunca quebra a run).
-"""
+"""Trace persistente e estruturado de execução (observabilidade)."""
 
 import json
 import shlex
@@ -46,8 +40,6 @@ def _run_with_trace(decisions, executions=None, tmp_path=None,
     return runner
 
 
-# 1. criação de um novo trace ------------------------------------------------
-
 def test_trace_creates_unique_file_per_execution(tmp_path):
     first = ExecutionTrace(trace_dir=str(tmp_path))
     second = ExecutionTrace(trace_dir=str(tmp_path))
@@ -57,8 +49,6 @@ def test_trace_creates_unique_file_per_execution(tmp_path):
     assert first.path.suffix == ".jsonl"
     assert str(first.run_id) in str(first.path)
 
-
-# 2. eventos escritos corretamente --------------------------------------------
 
 def test_trace_writes_well_formed_jsonl(tmp_path):
     trace = _make_trace(tmp_path)
@@ -72,8 +62,6 @@ def test_trace_writes_well_formed_jsonl(tmp_path):
     assert "run_id" in payload and "timestamp" in payload
 
 
-# 3. múltiplos eventos (ordem preservada) -------------------------------------
-
 def test_trace_preserves_order_of_multiple_events(tmp_path):
     trace = _make_trace(tmp_path)
     for name in ("run_start", "iteration_start", "planner_decision",
@@ -85,8 +73,6 @@ def test_trace_preserves_order_of_multiple_events(tmp_path):
         "run_start", "iteration_start", "planner_decision", "run_end"]
     assert trace.event_count == 4
 
-
-# 4. run_id consistente --------------------------------------------------------
 
 def test_trace_run_id_consistent_across_events(tmp_path):
     trace = _make_trace(tmp_path)
@@ -100,8 +86,6 @@ def test_trace_run_id_consistent_across_events(tmp_path):
     assert events, "trace deve conter eventos"
     assert {e["run_id"] for e in events} == {trace.run_id}
 
-
-# 5. iteração registrada --------------------------------------------------------
 
 def test_trace_records_iteration_flow(tmp_path):
     trace = _make_trace(tmp_path)
@@ -126,8 +110,6 @@ def test_trace_records_iteration_flow(tmp_path):
     assert by_type["run_end"][0]["outcome"] == "success"
 
 
-# 6. Planner retry registrado ---------------------------------------------------
-
 def test_trace_records_planner_retry(tmp_path):
     trace = _make_trace(tmp_path)
     task = Task(tool="write_file",
@@ -151,8 +133,6 @@ def test_trace_records_planner_retry(tmp_path):
     assert errors[0]["error_type"] == "ValueError"
     assert "JSON inválido" in errors[0]["error_signature"]
 
-
-# 7. Executor error registrado ---------------------------------------------------
 
 def test_trace_records_executor_error(tmp_path):
     trace = _make_trace(tmp_path)
@@ -234,8 +214,6 @@ def _run_command_runner(tmp_path, trace, test_file_content):
     return runner
 
 
-# 8a. teste com sucesso registrado ------------------------------------------------
-
 def test_trace_records_passing_test(projects_root, tmp_path):
     trace = _make_trace(tmp_path)
     runner = _run_command_runner(
@@ -252,8 +230,6 @@ def test_trace_records_passing_test(projects_root, tmp_path):
     assert results[0]["iteration"] == 1
 
 
-# 8b. teste com falha registrado ---------------------------------------------------
-
 def test_trace_records_failing_test(projects_root, tmp_path):
     trace = _make_trace(tmp_path)
     runner = _run_command_runner(
@@ -267,8 +243,6 @@ def test_trace_records_failing_test(projects_root, tmp_path):
     assert results[0]["success"] is False
     assert results[0]["exit_code"] != 0
 
-
-# 9. finish block registrado ---------------------------------------------------------
 
 def test_trace_records_finish_block(tmp_path):
     trace = _make_trace(tmp_path)
@@ -308,8 +282,6 @@ def test_trace_records_finish_block(tmp_path):
     assert [g["passed"] for g in gates] == [False, True]
 
 
-# 10. FinalVerification registrada --------------------------------------------------------
-
 def test_trace_records_final_verification_statuses(tmp_path):
     trace = _make_trace(tmp_path)
     runner = _run_with_trace(
@@ -325,15 +297,12 @@ def test_trace_records_final_verification_statuses(tmp_path):
     assert verifications[0]["iteration"] == 1
 
 
-# 11. conteúdo sensível não é armazenado ------------------------------------------
-
 def test_trace_never_stores_write_file_content(tmp_path):
     secret = "SUPER-SECRETO-" * 500
     args = {"project_name": "p", "file_path": "a.py", "content": secret}
 
     sanitized = sanitize_arguments("write_file", args)
     assert sanitized["content"] == f"<omitted: {len(secret)} chars>"
-    # dict original intacto (nunca muta).
     assert args["content"] == secret
 
     trace = _make_trace(tmp_path)
@@ -381,15 +350,12 @@ def test_trace_end_to_end_omits_secret_file_content(tmp_path):
     assert secret not in trace.path.read_text(encoding="utf-8")
 
 
-# 12. falha na escrita não interrompe a run --------------------------------------------
-
 def test_trace_record_never_raises(tmp_path):
     trace = _make_trace(tmp_path)
     trace.trace_dir = tmp_path / "arquivo"
     trace.trace_dir.write_text("sou um arquivo, não um diretório")
     trace.path = trace.trace_dir / "impossivel.jsonl"
 
-    # Não levanta, mesmo com disco/paths quebrados.
     trace.record("iteration_start", iteration=1)
     assert trace.event_count == 0
 
@@ -411,7 +377,6 @@ def test_runner_completes_when_trace_is_broken(tmp_path):
                            arguments=task.arguments)],
         tmp_path=tmp_path, trace=trace)
 
-    # A run completa normalmente apesar do trace inoperante.
     assert runner.run(objective="obj", project_name="p") == "done"
     assert runner._stats.planner_calls == 3
     assert runner._stats.corrections == 1

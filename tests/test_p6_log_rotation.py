@@ -39,7 +39,6 @@ def _trace_names(directory):
                   if p.name.startswith("aidev-trace-"))
 
 
-# abaixo do limite não rotaciona -------------------------------------------
 def test_below_limit_does_not_rotate(tmp_path):
     for i in range(3):
         _make_trace_file(tmp_path, f"aidev-trace-20240101T00000{i}Z-r{i}.jsonl",
@@ -50,7 +49,6 @@ def test_below_limit_does_not_rotate(tmp_path):
     assert len(_trace_names(tmp_path)) == 3
 
 
-# acima do limite (quantidade) rotaciona os mais antigos --------------------
 def test_above_count_limit_rotates_oldest(tmp_path):
     for i in range(5):
         _make_trace_file(tmp_path, f"aidev-trace-20240101T00000{i}Z-r{i}.jsonl",
@@ -65,7 +63,6 @@ def test_above_count_limit_rotates_oldest(tmp_path):
                          for i in (3, 4)]
 
 
-# acima do limite (tamanho) rotaciona ----------------------------------------
 def test_above_size_limit_rotates_oldest(tmp_path):
     _make_trace_file(tmp_path, "aidev-trace-20240101T000000Z-old.jsonl",
                      800, 1000)
@@ -79,7 +76,6 @@ def test_above_size_limit_rotates_oldest(tmp_path):
         "aidev-trace-20240101T000001Z-new.jsonl"]
 
 
-# arquivos além do limite são removidos; outros arquivos intactos ------------
 def test_non_trace_files_untouched(tmp_path):
     keeper = tmp_path / "important.txt"
     keeper.write_text("do not touch")
@@ -93,7 +89,6 @@ def test_non_trace_files_untouched(tmp_path):
         "aidev-trace-20240101T000001Z-b.jsonl"]
 
 
-# log atual nunca é perdido ----------------------------------------------------
 def test_current_log_is_never_removed(tmp_path):
     current = _make_trace_file(
         tmp_path, "aidev-trace-20240101T000009Z-current.jsonl", 5000, 500)
@@ -103,7 +98,7 @@ def test_current_log_is_never_removed(tmp_path):
     result = prune_old_traces(tmp_path, keep_path=current, keep_files=1,
                               max_total_bytes=100)
     assert current.exists()
-    assert result["kept"] >= 1  # atual + (nada mais cabe, mas atual fica)
+    assert result["kept"] >= 1
 
 
 def test_new_log_keeps_being_written_after_prune(tmp_path):
@@ -117,7 +112,6 @@ def test_new_log_keeps_being_written_after_prune(tmp_path):
     events = trace.read_events()
     assert [e["event"] for e in events] == ["iteration_start", "run_end"]
     assert all(e["run_id"] == "abc123" for e in events)
-    # JSONL válido linha a linha.
     with open(trace.path, encoding="utf-8") as handle:
         for line in handle:
             assert json.loads(line)["event"] in (
@@ -131,7 +125,6 @@ def test_prune_never_raises(tmp_path):
                             max_total_bytes=-1)["removed"] == 0
 
 
-# defaults e env -----------------------------------------------------------------
 def test_defaults_and_env(monkeypatch):
     monkeypatch.delenv("AIDEV_TRACE_KEEP_FILES", raising=False)
     monkeypatch.delenv("AIDEV_TRACE_MAX_TOTAL_MB", raising=False)
@@ -164,7 +157,6 @@ def test_log_rotation_defaults_and_env(monkeypatch):
     assert log_rotation_limits()[0] == DEFAULT_LOG_MAX_MB * 1024 * 1024
 
 
-# app log rotaciona por tamanho com o mesmo formato -------------------------------
 def test_app_log_rotates_by_size(tmp_path):
     log_file = str(tmp_path / "aidev.log")
     setup_logging(level="INFO", log_file=log_file,
@@ -179,11 +171,9 @@ def test_app_log_rotates_by_size(tmp_path):
     assert backups, "esperava ao menos um backup rotacionado"
     assert len(backups) <= 2
     assert (tmp_path / "aidev.log").exists()
-    # Formato preservado: "[LEVEL] name: message".
     content = (tmp_path / "aidev.log").read_text(encoding="utf-8")
     assert "test_p6_rotation" in content
 
 
 def test_app_log_without_file_still_works():
-    # Sem arquivo: só stderr, sem exceção.
     setup_logging(level="INFO", log_file=None)

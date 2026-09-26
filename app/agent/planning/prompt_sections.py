@@ -1,24 +1,7 @@
-"""Decomposição observacional do prompt do Planner (Etapa 2B).
-
-NÃO otimiza nem remove contexto — apenas mede.
-
-O Planner recebe `objective: str` e `context: str` já concatenados pelo
-Runner. Este módulo recupera os componentes individuais a partir das
-marcações estáveis produzidas por:
-
-- Runner._build_memory_block (SUMMARY, CHECKLIST, FORBIDDEN ERRORS, etc.)
-- OperationalMemory.render (HISTORY, KNOWN COMMANDS, FILES)
-- TaskContextBuilder.build (PARENT TASK:)
-- Runner pós-execução (EXECUTION RESULT:)
-- Blocos de erro do Runner + retry do Planner (ERROR.../CORRECTION...)
-
-Se o formato do contexto mudar no futuro, as seções ausentes retornam ""
-e o resíduo vai para `other_context` — nunca levanta exceção.
-"""
+"""Decomposição observacional do prompt do Planner."""
 
 from app.llm.utils import estimate_tokens
 
-# Componentes dinâmicos extraídos do `context` (ordem de aparição esperada).
 DYNAMIC_COMPONENTS = [
     "project_summary",
     "objective_checklist",
@@ -33,10 +16,8 @@ DYNAMIC_COMPONENTS = [
     "other_context",
 ]
 
-# Todos os componentes medidos por chamada (estáticos + dinâmicos + objective).
 PLANNER_COMPONENTS = ["static_template", "objective"] + DYNAMIC_COMPONENTS
 
-# Marcadores estáveis (prefixos) usados para fatiar o contexto.
 PROJECT_SUMMARY_MARKER = "PROJECT SUMMARY:"
 OBJECTIVE_CHECKLIST_MARKER = "OBJECTIVE CHECKLIST"
 ERROR_CHECKLIST_MARKER = "CURRENT ERROR CHECKLIST"
@@ -47,10 +28,6 @@ FILE_LIST_MARKER = "CURRENT PROJECT FILES"
 TASK_CONTEXT_MARKER = "PARENT TASK:"
 EXECUTION_RESULT_MARKER = "EXECUTION RESULT:"
 
-# Blocos de erro/ retry anexados ao final do contexto. Ordem não importa;
-# a detecção usa o menor índice dentre todos após o resultado/arquivos.
-# NOTA: "REPETITION ERROR:" é prefixo de "REPETITION/STAGNATION ERROR:"?
-# Não — o segundo tem "/" após REPETITION, então a busca com ":" não colide.
 ERROR_BLOCK_MARKERS = (
     "VALIDATION ERROR BEFORE FINISH:",
     "REPETITION/STAGNATION ERROR:",
@@ -94,7 +71,6 @@ def split_planner_context(context: str | None) -> dict[str, str]:
     if not text:
         return sections
 
-    # Localiza cada marcador principal (primeira ocorrência).
     i_summary = _find_first(text, PROJECT_SUMMARY_MARKER)
     i_obj = _find_first(text, OBJECTIVE_CHECKLIST_MARKER)
     i_err_check = _find_first(text, ERROR_CHECKLIST_MARKER)
@@ -105,31 +81,15 @@ def split_planner_context(context: str | None) -> dict[str, str]:
     i_task = _find_first(text, TASK_CONTEXT_MARKER)
     i_result = _find_first(text, EXECUTION_RESULT_MARKER)
 
-    # Blocos de erro: procura a partir do resultado (ou task, ou arquivos,
-    # ou início) para evitar confundir conteúdo do summary com erro real.
-    # Na prática os erros ficam no final; usar o menor índice após o ponto
-    # de ancoragem captura o início da cauda de erros.
     anchor = 0
     for candidate in (i_result, i_task, i_files):
         if candidate != -1:
             anchor = candidate
             break
-    # Se há resultado/task/arquivos, erros vêm depois; senão, do início.
     i_error = _find_earliest_error_block(text, anchor if anchor else 0)
-    # Se o "erro" encontrado está antes da âncora (ex.: palavra ERRO dentro
-    # do summary), ignora e procura após a âncora + len do marcador âncora.
-    # Como anchor já é o início da seção âncora, qualquer erro antes dela
-    # seria falso positivo — re-procura estritamente depois.
     if i_error != -1 and anchor and i_error < anchor:
-        # Avança a busca para depois da âncora.
         i_error = _find_earliest_error_block(text, anchor + 1)
-        # Ainda pode estar dentro da seção âncora (ex.: resultado contém
-        # texto de erro). Para execução/result/task/files, o bloco de erro
-        # real sempre começa com "\n\n" + marcador no final; conteúdo
-        # interno raramente tem o marcador exato no início de linha.
-        # Aceitamos o primeiro após a âncora como início da cauda.
 
-    # Monta lista ordenada de (nome, índice) para fatiamento sequencial.
     ordered: list[tuple[str, int]] = []
     if i_summary != -1:
         ordered.append(("project_summary", i_summary))
@@ -153,18 +113,13 @@ def split_planner_context(context: str | None) -> dict[str, str]:
         ordered.append(("error_blocks", i_error))
 
     if not ordered:
-        # Nenhum marcador conhecido: tudo é contexto residual.
         sections["other_context"] = text
         return sections
 
     ordered.sort(key=lambda item: item[1])
 
-    # Texto antes do primeiro marcador (normalmente vazio) -> other_context.
     first_idx = ordered[0][1]
     leading = text[:first_idx]
-    # Separadores "\n\n" entre blocos não pertencem a nenhuma seção;
-    # o overhead é documentado via prompt_chars vs soma. Aqui guardamos
-    # apenas resíduo não-branco como other_context.
     if leading.strip():
         sections["other_context"] = leading
 
@@ -172,9 +127,6 @@ def split_planner_context(context: str | None) -> dict[str, str]:
         end = ordered[pos + 1][1] if pos + 1 < len(ordered) else len(text)
         sections[name] = text[start:end]
 
-    # Se não há marcadores de erro mas há cauda após execution_result que
-    # não foi capturada (não deveria ocorrer pelo fatiamento acima), ela já
-    # está dentro de execution_result. Nada a fazer.
 
     return sections
 

@@ -58,9 +58,7 @@ def test_record_without_component_does_not_pollute_breakdown():
     tracker.record(Usage(100, 10, 110), "groq")
     tracker.record(Usage(50, 5, 55), "groq", component="Planner")
 
-    # Global totals still include everything
     assert tracker.total.prompt_tokens == 150
-    # But component breakdown only has "Planner"
     assert "Planner" in tracker._by_component
     assert "unknown" not in tracker._by_component
 
@@ -115,9 +113,9 @@ def test_breakdown_format():
     assert "TOKEN USAGE BREAKDOWN" in breakdown
     assert "Planner" in breakdown
     assert "TaskDecisionMaker" in breakdown
-    assert "253" in breakdown  # total tokens
-    assert "|     3 |" in breakdown  # total calls
-    assert "230" in breakdown  # total prompt
+    assert "253" in breakdown
+    assert "|     3 |" in breakdown
+    assert "230" in breakdown
 
 
 def test_breakdown_orders_by_total_tokens_descending():
@@ -138,7 +136,6 @@ def test_breakdown_empty_when_no_components():
     tracker.record(Usage(100, 10, 110), "groq")
 
     result = tracker.breakdown()
-    # When no components are tracked, falls back to summary
     assert "Chamadas à LLM" in result
 
 

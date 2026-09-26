@@ -4,10 +4,6 @@ from app.tools.base import Tool, ToolType
 from app.tools.config import get_projects_dir
 
 
-# Componentes de caminho que nunca podem ser removidos via delete_file.
-# Razoável e mínima: controle de versão e estado interno do agente.
-# (O .git do próprio AIDev já está fora do workspace; aqui protegemos
-# o .git de cada projeto + o estado persistido do TaskState.)
 PROTECTED_PATH_PARTS = frozenset({".git", ".aidev"})
 
 
@@ -47,7 +43,6 @@ def delete_file(project_name: str, file_path: str) -> str:
     if protected_reason is not None:
         raise PermissionError(protected_reason)
 
-    # Nunca remover a raiz do projeto em si.
     if target == project_dir:
         raise PermissionError(
             "DELETE_ERROR: removing the project root is not allowed."
@@ -62,7 +57,6 @@ def delete_file(project_name: str, file_path: str) -> str:
             f"removed via delete_file): {file_path}"
         )
 
-    # Symlinks: remover o link, nunca seguir para fora do projeto.
     target.unlink()
 
     return f"DELETE_SUCCESS\nfile: {file_path}"

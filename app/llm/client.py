@@ -35,9 +35,6 @@ class LLMClient:
             )
         except Exception as error:
             duration_ms = (time.monotonic() - start) * 1000
-            # Etapa 2E: a métrica é registrada mesmo em exceção, com
-            # Usage zerado (tokens desconhecidos) + tipo do erro. Não
-            # usa usage=None para não cair no noop do record().
             self.usage.record(
                 Usage(),
                 None,
@@ -84,7 +81,7 @@ class LLMClient:
         attempt: int = 1,
         request_type: str = "normal",
     ) -> LLMResponse:
-        """Variante assíncrona do `generate` (Etapa 3).
+        """Variante assíncrona do `generate`.
 
         Espelho exato: mesma medição de tempo, mesmo registro no
         UsageTracker (incluindo `request_type`, breakdown e registro

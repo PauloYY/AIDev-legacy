@@ -1,19 +1,4 @@
-"""Etapa 5 — compactação inteligente do contexto do Planner.
-
-Cobre os 18 casos obrigatórios sem alterar nenhum teste existente:
-1-3.   Prompt compacto preserva objetivo, regras e tools.
-4.     Schemas compactos continuam válidos (nome/required/tipos).
-5-7.   Janela de histórico: remove sucessos antigos, mantém recente e erros.
-8-9.   Resultados grandes reduzem sem perder STATUS/falhas de teste.
-10.    Estado atual (arquivos) permanece disponível.
-11.    Duplicações são removidas (prompt menor, nada essencial some).
-12-13. Primeira decisão e decisão após erro recebem contexto correto.
-14-15. Short repair e full retry intactos com a flag ligada.
-16-17. Finish gate e final verification intactos com a flag ligada.
-18.    Flag desligada recupera o comportamento anterior byte a byte.
-Extras: redução mensurável, breakdown consistente, sem truncamento
-destrutivo, teto da cauda de erros, resumo capped.
-"""
+"""Compactação inteligente do contexto do Planner."""
 
 import json
 
@@ -35,10 +20,6 @@ from app.llm.client import LLMClient
 from app.llm.models import LLMResponse, Usage
 from app.tools.registry import ToolRegistry
 
-
-# --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
 
 def _task(tool, arguments, dependencies=None, **extra):
     return Task(tool=tool, arguments=arguments,
@@ -121,7 +102,6 @@ def _task_json(tool, arguments, **extra):
     return json.dumps({"action": "task", "task": task})
 
 
-# Regras essenciais que NUNCA podem sumir do template compacto.
 ESSENTIAL_RULES = [
     "Return ONLY valid JSON",
     "dependencies",
@@ -151,17 +131,12 @@ ESSENTIAL_SECTIONS = [
 ]
 
 
-# --------------------------------------------------------------------------
-# 1-3. prompt compacto preserva objetivo, regras e tools
-# --------------------------------------------------------------------------
-
 def test_compact_prompt_preserves_objective():
     """Caso 1: objetivo aparece integral no prompt compacto."""
     planner = _planner()
     objective = "Construir o gerenciador XPTO com modelo e testes"
     prompt = planner._build_prompt_compact(objective, "ctx")
     assert objective in prompt
-    # Objetivo não é truncado nem resumido.
     assert prompt.count(objective) >= 1
 
 
@@ -173,7 +148,6 @@ def test_compact_prompt_preserves_essential_rules():
         assert rule in prompt, f"regra essencial sumiu: {rule}"
     for section in ESSENTIAL_SECTIONS:
         assert section in prompt, f"seção sumiu: {section}"
-    # Formatos de decisão completos.
     for action in ('"task"', '"finish"', '"fail"'):
         assert action in prompt
 
@@ -185,13 +159,8 @@ def test_compact_prompt_preserves_tools():
     prompt = planner._build_prompt_compact("obj", "ctx")
     for name in sorted(tools._tools.keys()):
         assert name in prompt, f"tool sumiu do prompt: {name}"
-    # project_name continua visível (argumento obrigatório ubíquo).
     assert "project_name" in prompt
 
-
-# --------------------------------------------------------------------------
-# 4. schemas compactos válidos
-# --------------------------------------------------------------------------
 
 def test_compact_tool_schemas_stay_valid():
     """Caso 4: nome/required/tipos preservados em toda tool."""
@@ -211,7 +180,6 @@ def test_compact_tool_schemas_stay_valid():
             tool.definition["function"]["parameters"]
             .get("properties", {}).keys())
         assert set(entry["properties"].keys()) == expected_props
-        # Tipos preservados (ex.: timeout_seconds continua integer).
         full_props = (
             tool.definition["function"]["parameters"]
             .get("properties", {}))
@@ -219,13 +187,8 @@ def test_compact_tool_schemas_stay_valid():
             prop_type = spec.get("type", "")
             if prop_type:
                 assert prop_type in entry["properties"][prop]
-    # Menor que o integral.
     assert len(compact_text) < len(planner._build_tools_context())
 
-
-# --------------------------------------------------------------------------
-# 5-7. janela de histórico
-# --------------------------------------------------------------------------
 
 def test_old_irrelevant_history_can_be_dropped():
     """Caso 5: sucessos antigos saem; omissão é explícita."""
@@ -235,7 +198,6 @@ def test_old_irrelevant_history_can_be_dropped():
     compact = memory.render_history_compact()
     assert len(compact) < len(full)
     assert "earlier action(s) omitted" in compact
-    # A ação mais antiga (sucesso) não precisa estar lá.
     assert "[1]" not in compact
 
 
@@ -251,9 +213,8 @@ def test_recent_history_is_kept():
 def test_recent_errors_are_kept():
     """Caso 7: falha recente e falha antiga preservadas."""
     memory = OperationalMemory(_tools())
-    # Falha antiga fora da janela (iter 2) + falha recente (iter 14).
     _fill_memory(memory, n=6, fail_at=2)
-    _fill_memory(memory, n=0)  # no-op p/ clareza
+    _fill_memory(memory, n=0)
     memory.record(iteration=14, tool="run_command",
                   arguments={"project_name": "p",
                              "command": "python -m pytest -q"},
@@ -265,14 +226,10 @@ def test_recent_errors_are_kept():
                                  "file_path": f"g{i}.py", "content": "x\n"},
                       result="ok", success=True)
     compact = memory.render_history_compact()
-    assert "[14]" in compact  # falha recente dentro da janela
-    assert "earlier failure preserved" in compact  # iter 2 resgatado
+    assert "[14]" in compact
+    assert "earlier failure preserved" in compact
     assert "STATUS: failure" in compact
 
-
-# --------------------------------------------------------------------------
-# 8-9. resultados grandes
-# --------------------------------------------------------------------------
 
 def test_big_results_shrink_without_losing_status(tmp_path):
     """Caso 8: output gigante vira head+tail com STATUS preservado."""
@@ -299,7 +256,6 @@ def test_big_results_shrink_without_losing_status(tmp_path):
     assert "STATUS: success (exit code 0)" in out
     assert "CAUDA-MARCADOR-FINAL-12345" in out
     assert "compacted" in out
-    # Pequenos voltam intactos.
     small = "STATUS: success (exit code 0)\nok"
     assert runner._truncate_compact(small) == small
 
@@ -330,10 +286,6 @@ def test_test_results_keep_failures():
     assert "FAILED test_login.py::test_x" in out
     assert "line 42" in out
 
-
-# --------------------------------------------------------------------------
-# 10-11. estado atual + deduplicação
-# --------------------------------------------------------------------------
 
 def test_current_state_stays_available(projects_root, monkeypatch):
     """Caso 10: arquivos/checklist/erros pendentes sobrevivem."""
@@ -395,17 +347,12 @@ def test_duplicated_info_is_removed():
     compact_hist = memory.render_history_compact()
     assert len(compact_hist) < len(full_hist)
 
-    # Erros proibidos: janela de 5 < 20 quando há muitos erros.
     err_mem = PlannerErrorMemory()
     for i in range(12):
         err_mem.record(f"ValueError: erro {i}")
     assert len(err_mem.render_compact()) < len(err_mem.render())
     assert "erro 11" in err_mem.render_compact()
 
-
-# --------------------------------------------------------------------------
-# 12-13. situações diferentes
-# --------------------------------------------------------------------------
 
 def test_first_decision_gets_correct_context(projects_root, monkeypatch):
     """Caso 12: 1ª decisão tem objetivo+estado+tools+regras, sem histórico."""
@@ -491,18 +438,12 @@ def test_decision_after_error_gets_error_context(
             result=FinalVerificationResult(FinalVerificationResult.OK)),
         execution_trace=NullTrace(),
     )
-    # run_command real falha (comando inexistente) ou passa; o que
-    # importa é que o RESULTADO e o histórico chegam ao finish.
     runner.run(objective="obj", project_name="p")
     assert len(seen) == 2
     assert "EXECUTION RESULT" in seen[1]
     assert "STATUS:" in seen[1]
     assert "run_command" in seen[1]
 
-
-# --------------------------------------------------------------------------
-# 14-15. short repair e full retry intactos
-# --------------------------------------------------------------------------
 
 def test_short_repair_still_works_with_compact_on(
         projects_root, tmp_path, monkeypatch):
@@ -538,7 +479,6 @@ def test_short_repair_still_works_with_compact_on(
     assert runner.run(objective="obj", project_name="p") == "done"
     retries = _events(trace, "planner_retry")
     assert [e["retry_type"] for e in retries] == ["short_repair"]
-    # O repair continua mínimo, sem contexto completo.
     assert "CURRENT CONTEXT" not in provider.prompts[1]
     assert "PREVIOUS DECISION" in provider.prompts[1]
 
@@ -579,13 +519,8 @@ def test_full_retry_still_works_with_compact_on(
     retries = _events(trace, "planner_retry")
     assert [e["retry_type"] for e in retries] == [
         "short_repair", "full_context"]
-    # O full retry compacto continua maior que o short.
     assert retries[1]["prompt_chars"] > retries[0]["prompt_chars"]
 
-
-# --------------------------------------------------------------------------
-# 16-17. finish gate e final verification intactos
-# --------------------------------------------------------------------------
 
 def test_finish_gate_still_blocks_with_compact_on(tmp_path, monkeypatch):
     """Caso 16: finish com problema bloqueia e depois aceita."""
@@ -675,10 +610,6 @@ def test_final_verification_receives_summary_with_compact_on(tmp_path,
     assert final.verify_calls[0]["summary"] == "novo resumo"
 
 
-# --------------------------------------------------------------------------
-# 18. flag off recupera o legado
-# --------------------------------------------------------------------------
-
 def test_disabling_compaction_restores_legacy(projects_root, monkeypatch):
     """Caso 18: flag off → prompt integral + histórico integral."""
     monkeypatch.setattr(Config, "compact_planner", False)
@@ -689,7 +620,6 @@ def test_disabling_compaction_restores_legacy(projects_root, monkeypatch):
     legacy = planner._build_prompt("obj", "ctx")
     assert len(prompt) < len(legacy)
 
-    # plan() com flag off envia o legado byte a byte.
     provider = _ScriptedProvider(
         [json.dumps({"action": "finish", "content": "done"})])
     planner2 = Planner(llm=LLMClient(provider),
@@ -697,7 +627,6 @@ def test_disabling_compaction_restores_legacy(projects_root, monkeypatch):
     planner2.plan(objective="obj", context="ctx", iteration=1)
     assert provider.prompts[0] == legacy
 
-    # Runner com flag off usa truncamento legado (head 4000).
     runner = Runner(
         planner=T.FakePlanner([_finish()]),
         task_decision_maker=T.FakeTaskDecisionMaker([]),
@@ -718,16 +647,11 @@ def test_disabling_compaction_restores_legacy(projects_root, monkeypatch):
     assert runner._truncate_for_planner(big) == runner._truncate(big)
     assert "compacted" not in runner._truncate_for_planner(big)
 
-    # Bloco de memória integral com flag off.
     memory = OperationalMemory(tools)
     _fill_memory(memory, n=10)
     assert "[1]" in memory.render_history()
     assert "[1]" not in memory.render_history_compact()
 
-
-# --------------------------------------------------------------------------
-# extras
-# --------------------------------------------------------------------------
 
 def test_compact_breakdown_sums_to_compact_prompt():
     """Breakdown do compacto soma no prompt compacto enviado."""
@@ -751,7 +675,6 @@ def test_no_destructive_truncation():
     prompt = planner._build_prompt_compact(long_objective, "ctx")
     assert long_objective in prompt
     assert "Return ONLY valid JSON" in prompt
-    # Nenhum marcador de truncamento arbitrário no template.
     assert "[truncated" not in prompt
     assert "characters omitted" not in prompt
 

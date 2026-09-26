@@ -200,10 +200,6 @@ def _check_java(project_dir: Path, timeout: int) -> str:
         str(path.relative_to(project_dir)) for path in java_files
     ]
 
-    # Compila todos os arquivos juntos numa passada só, em vez de um
-    # por um — assim referências entre classes de arquivos diferentes
-    # são resolvidas corretamente (não gera falso positivo por causa
-    # de dependência cruzada).
     result = _run(
         project_dir,
         ["javac", "-d", JAVAC_OUT_DIR, "-Xlint:all", *relatives],
@@ -218,10 +214,6 @@ def _check_java(project_dir: Path, timeout: int) -> str:
 
 
 def _check_rust(project_dir: Path, timeout: int) -> str:
-    # --offline porque o sandbox não tem rede; se houver dependências
-    # não vendorizadas/cacheadas, essa checagem falha por causa disso
-    # e não por um erro real de código — o relatório abaixo deixa isso
-    # visível no stderr.
     result = _run(
         project_dir,
         ["cargo", "check", "--offline"],

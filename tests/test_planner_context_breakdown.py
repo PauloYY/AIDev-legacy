@@ -1,10 +1,4 @@
-"""Etapa 2B — instrumentação observacional do contexto do Planner.
-
-Verifica medição sem otimização: cada componente é medido via
-estimate_tokens(), totais batem, vazios/None não quebram, múltiplas
-iterações são preservadas e prompt/decisão/component/iteration seguem
-inalterados. Também cobre compatibilidade do UsageTracker.
-"""
+"""Instrumentação observacional do contexto do Planner."""
 
 from unittest.mock import MagicMock, patch
 
@@ -97,7 +91,6 @@ class _FakeProvider:
         )
 
 
-# 1. Cada componente é medido.
 def test_each_required_component_is_measured(tools, parser):
     planner, _ = _make_planner_with_mock_llm(tools, parser)
     sections = planner.build_prompt_sections("obj", _full_context())
@@ -110,7 +103,6 @@ def test_each_required_component_is_measured(tools, parser):
         assert "estimated_tokens" in measured[name]
 
 
-# 2. estimate_tokens() é usado para cada componente.
 def test_estimate_tokens_used_for_each_component(tools, parser):
     planner, _ = _make_planner_with_mock_llm(tools, parser)
     sections = planner.build_prompt_sections("obj", _full_context())
@@ -119,13 +111,11 @@ def test_estimate_tokens_used_for_each_component(tools, parser):
         side_effect=lambda t: estimate_tokens(t),
     ) as mocked:
         measured = planner.measure_prompt_sections(sections)
-    # Chamado uma vez por componente presente no dict.
     assert mocked.call_count == len(sections)
     for name, text in sections.items():
         assert measured[name]["estimated_tokens"] == estimate_tokens(text)
 
 
-# 3. O total é calculado corretamente.
 def test_total_is_sum_of_components(tools, parser):
     planner, _ = _make_planner_with_mock_llm(tools, parser)
     sections = planner.build_prompt_sections("objective text", _full_context())
@@ -135,13 +125,10 @@ def test_total_is_sum_of_components(tools, parser):
     assert totals["estimated_tokens"] == sum(
         v["estimated_tokens"] for v in measured.values()
     )
-    # Soma dos componentes equivale ao prompt final (a menos de
-    # arredondamento de tokens; chars deve ser exato).
     prompt = planner._build_prompt("objective text", _full_context())
     assert totals["chars"] == len(prompt)
 
 
-# 4. Componentes vazios não causam erro.
 def test_empty_components_do_not_error():
     sections = split_planner_context("")
     assert all(v == "" for v in sections.values())
@@ -150,27 +137,22 @@ def test_empty_components_do_not_error():
     assert summarize_measurements(measured) == {"chars": 0, "estimated_tokens": 0}
 
 
-# 5. Medição funciona quando contexto é None/ausente.
 def test_none_objective_and_context_handled(tools, parser):
     planner, _ = _make_planner_with_mock_llm(tools, parser)
     sections = planner.build_prompt_sections(None, None)
     assert sections["objective"] == ""
     measured = planner.measure_prompt_sections(sections)
-    # static_template sempre existe; demais dinâmicos vazios exceto headers?
-    # O importante é não levantar e zerar o que falta.
     assert measured["objective"] == {"chars": 0, "estimated_tokens": 0}
     assert measured["static_template"]["chars"] > 0
 
     sections2 = planner.build_prompt_sections("obj", None)
     assert sections2["objective"] == "obj"
 
-    # measure_sections aceita None diretamente.
     measured2 = measure_sections({"x": None, "y": "abc"})
     assert measured2["x"] == {"chars": 0, "estimated_tokens": 0}
     assert measured2["y"]["chars"] == 3
 
 
-# 6. O breakdown preserva múltiplas iterações.
 def test_breakdown_preserves_multiple_iterations(tools, parser):
     provider = _FakeProvider()
     llm = LLMClient(provider)
@@ -183,7 +165,6 @@ def test_breakdown_preserves_multiple_iterations(tools, parser):
     assert len(history) == 2
     assert history[0]["iteration"] == 1
     assert history[1]["iteration"] == 2
-    # Segunda iteração tem contexto maior que a primeira.
     assert history[1]["estimated_total_tokens"] > history[0]["estimated_total_tokens"]
 
     stats = llm.usage.planner_context_stats()
@@ -193,7 +174,6 @@ def test_breakdown_preserves_multiple_iterations(tools, parser):
     )
 
 
-# 7. A medição não altera o prompt final.
 def test_measurement_does_not_alter_final_prompt(
         tools, parser, monkeypatch):
     from app.config import Config
@@ -201,7 +181,6 @@ def test_measurement_does_not_alter_final_prompt(
     objective = "my objective"
     context = _full_context()
 
-    # Modo legado: medição não altera o prompt integral.
     monkeypatch.setattr(Config, "compact_planner", False)
     provider = _FakeProvider()
     planner = Planner(llm=LLMClient(provider), parser=parser, tools=tools)
@@ -209,7 +188,6 @@ def test_measurement_does_not_alter_final_prompt(
     planner.plan(objective=objective, context=context, iteration=3)
     assert provider.seen_messages[0][0].content == expected
 
-    # Modo compacto (Etapa 5): medição também não altera o prompt.
     monkeypatch.setattr(Config, "compact_planner", True)
     provider2 = _FakeProvider()
     planner2 = Planner(
@@ -219,7 +197,6 @@ def test_measurement_does_not_alter_final_prompt(
     assert provider2.seen_messages[0][0].content == expected2
 
 
-# 8. A medição não altera a decisão do Planner.
 def test_measurement_does_not_alter_decision(tools, parser):
     provider = _FakeProvider(
         content='{"action": "finish", "content": "resultado final"}'
@@ -230,7 +207,6 @@ def test_measurement_does_not_alter_decision(tools, parser):
     decision = planner.plan(objective="o", context=_full_context(), iteration=1)
     assert decision.content == "resultado final"
 
-    # Com contexto vazio a decisão (mockada) também passa intacta.
     provider2 = _FakeProvider(
         content='{"action": "fail", "reason": "impossivel"}'
     )
@@ -239,11 +215,9 @@ def test_measurement_does_not_alter_decision(tools, parser):
     assert decision2.reason == "impossivel"
 
 
-# 9. Comportamento anterior do UsageTracker continua funcionando.
 def test_usagetracker_backward_compatibility():
     tracker = UsageTracker()
     tracker.record(Usage(100, 10, 110), "groq", component="Planner")
-    # Sem breakdown: histórico de contexto vazio, mas breakdown antigo ok.
     assert tracker.get_planner_context_history() == []
     assert "Planner" in tracker.breakdown()
     assert "Chamadas à LLM" in tracker.summary()
@@ -255,7 +229,6 @@ def test_usagetracker_backward_compatibility():
     assert "Planner Context Breakdown" in empty_report
 
 
-# 10. Planner atribui component="Planner" e iteration.
 def test_planner_records_component_and_iteration(tools, parser):
     provider = _FakeProvider()
     llm = LLMClient(provider)
@@ -316,7 +289,6 @@ def test_unclassified_context_goes_to_other_context():
 def test_llmclient_forwards_breakdown_without_breaking_old_callers():
     provider = _FakeProvider()
     client = LLMClient(provider)
-    # Chamada antiga sem breakdown continua funcionando.
     client.generate(
         messages=[Message(role="user", content="hi")],
         component="Planner",

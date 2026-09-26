@@ -65,8 +65,6 @@ def edit_file(
 
     updated = content.replace(old_text, new_text, 1)
 
-    # Escrita atômica: validações já passaram; escreve em tmp + replace
-    # para não deixar o arquivo pela metade em caso de falha de I/O.
     tmp_fd, tmp_name = tempfile.mkstemp(
         dir=str(target_file.parent), prefix=".aidev-edit-"
     )
@@ -81,7 +79,6 @@ def edit_file(
             pass
         raise
 
-    # Linha da ocorrência (1-indexed) para o resumo.
     line_number = content[: content.find(old_text)].count("\n") + 1
 
     return (

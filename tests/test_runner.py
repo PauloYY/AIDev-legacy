@@ -136,7 +136,6 @@ class FakeErrorChecklist:
         pass
 
     def apply_unified(self, analysis):
-        # Projeção Fase 6 (fake: só registra p/ asserções).
         self.applied.append(analysis)
         return 0
 
@@ -274,9 +273,6 @@ def test_repeated_identical_planner_error_does_not_stop_early():
 
     assert Runner.MAX_PLANNER_ATTEMPTS == 5
 
-    # 4 erros repetidos seguidos (dentro do orçamento de 5 tentativas)
-    # e só na 5a o Planner acerta — se o "já visto" cortasse o retry
-    # mais cedo, isso não chegaria a rodar até o fim.
     decisions = [
         error, error, error, error,
         Decision(action=DecisionAction.TASK, task=task),
@@ -302,11 +298,8 @@ def test_repeated_identical_planner_error_does_not_stop_early():
 
     assert result == "done"
 
-    # A partir da 2a vez que o erro aparece (3a chamada ao Planner
-    # nesta run), a correção precisa ser a versão reforçada.
     assert "REPEATED ERROR" in planner.received_contexts[2]
     assert "REPEATED ERROR" in planner.received_contexts[3]
-    # Na 1a vez, ainda é a correção genérica normal.
     assert "PREVIOUS ATTEMPT CORRECTION" in planner.received_contexts[1]
 
 
@@ -448,7 +441,7 @@ def test_free_pass_does_not_consume_periodic_budget():
     runner.run(objective="obj", project_name="p")
 
     assert validator.calls == [True]
-    assert memory.consumed_at == []  # passe livre não gasta o orçamento
+    assert memory.consumed_at == []
 
 
 def test_final_verification_blocks_finish_on_problems():
@@ -457,7 +450,6 @@ def test_final_verification_blocks_finish_on_problems():
 
     from app.agent.context.final_verification import FinalVerificationResult
 
-    # Primeiro chama retorna problemas (bloqueia), segunda chamada passa
     call_count = [0]
 
     class SwitchingFinalVerification(FakeFinalVerification):
@@ -481,7 +473,6 @@ def test_final_verification_blocks_finish_on_problems():
         tool="write_file",
         arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
     )
-    # 1a TASK + 1a FINISH (bloqueada) + 2a FINISH (aceita)
     decisions = [
         Decision(action=DecisionAction.TASK, task=task),
         Decision(action=DecisionAction.FINISH, content="done"),
@@ -495,7 +486,7 @@ def test_final_verification_blocks_finish_on_problems():
     result = runner.run(objective="obj", project_name="p")
 
     assert result == "done2"
-    assert len(fv.verify_calls) == 2  # rodou duas vezes (1a finish bloqueada, 2a passou)
+    assert len(fv.verify_calls) == 2
 
 
 def test_final_verification_unavailable_allows_finish_with_warning():
@@ -567,7 +558,6 @@ def test_final_verification_passes_before_checklist_pending_warning():
     def capture_event(event):
         events.append(event.type)
 
-    # Primeiro chama retorna problemas (bloqueia), segunda chamada passa
     call_count = [0]
 
     class SwitchingFinalVerification(FakeFinalVerification):
@@ -600,7 +590,6 @@ def test_final_verification_passes_before_checklist_pending_warning():
         tool="write_file",
         arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
     )
-    # 1a FINISH (bloqueada) + 2a FINISH (passa)
     decisions = [
         Decision(action=DecisionAction.FINISH, content="done"),
         Decision(action=DecisionAction.FINISH, content="done2"),
@@ -615,16 +604,11 @@ def test_final_verification_passes_before_checklist_pending_warning():
     runner.on_event = capture_event
     runner.checklist = WarningChecklist()
 
-    # Deve rodar a verificação final e bloquear, sem chegar ao aviso de checklist
     runner.run(objective="obj", project_name="p")
 
     assert "final_verification_start" in events
-    assert "planner_error" in events  # o erro de bloqueio do finish
+    assert "planner_error" in events
 
-    # A verificação final deve rodar ANTES do aviso de checklist pendente.
-    # A primeira iteração (finish bloqueado) não chega ao checklist.
-    # A segunda iteração (finish passa) chega ao checklist — mas a
-    # verificação final já apareceu antes.
     fv_start_idx = events.index("final_verification_start")
     cl_idx = events.index("checklist_pending_on_finish")
     assert fv_start_idx < cl_idx
@@ -715,11 +699,6 @@ def test_investigation_task_is_not_counted_as_mutation():
     result = runner.run(objective="obj", project_name="p")
 
     assert result == "done"
-    # A task de investigação (read_file) não deve ter sido
-    # considerada mutação — apenas a write_file entra em
-    # succeeded_mutations. O teste verifica que a run completa
-    # sem erro de repetição, o que só é possível porque a
-    # investigação não conta como mutação.
 
 
 def test_investigation_task_does_not_increment_stagnant_iterations():
@@ -883,7 +862,6 @@ def test_executor_second_validation_respects_investigation_flag():
         final_verification=fv,
     )
 
-    # Deve completar sem levantar ValueError na segunda validação
     result = runner.run(objective="Analise o projeto.", project_name="p")
     assert result == "done"
 
@@ -903,13 +881,11 @@ def test_executor_second_validation_still_rejects_without_flag():
     tools.load_defaults()
     real_validator = TaskValidator(tools)
 
-    # Simula a segunda validação do Runner com allow_investigation=False
-    # e task.investigation=False
     with pytest.raises(ValueError) as exc_info:
         real_validator.validate_arguments(
             "read_file",
             {"project_name": "p", "file_path": "a.py"},
-            allow_investigation=False or False,  # igual ao Runner: allow_investigation or task.investigation
+            allow_investigation=False or False,
         )
 
     assert "read_file" in str(exc_info.value)

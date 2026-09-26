@@ -1,23 +1,4 @@
-"""Paralelização segura de operações independentes (Etapa 3).
-
-Escopo propositalmente estreito: executar em paralelo SOMENTE
-operações puramente observadoras (leituras), que por definição não
-alteram disco/estado e não consomem o resultado umas das outras.
-
-Regras de segurança (não relaxar sem revisão):
-- `PURE_READ_TOOLS`: read_file, list_files, find_references,
-  list_symbols. `run_command` e `check_project` NUNCA entram aqui:
-  o primeiro pode mutar arquivos via shell, o segundo dispara
-  compilações com efeitos colaterais (caches, /tmp).
-- Writes (`write_file`, `run_command` mutante) continuam sempre
-  sequenciais — o Runner executa uma única tool principal por
-  iteração, e este módulo nunca é usado para elas.
-- Resultados sempre na ordem de entrada (determinismo): o chamador
-  faz o bookkeeping (memória, eventos, trace) sequencialmente após
-  o batch, como se as operações tivessem rodado em ordem.
-- Falha em um item NÃO cancela os demais (mesma semântica do loop
-  sequencial atual, que captura por item).
-"""
+"""Paralelização segura de operações independentes."""
 
 import logging
 import time
@@ -29,12 +10,6 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 
-# Tools comprovadamente sem efeitos colaterais relevantes. Qualquer
-# tool fora deste conjunto roda pelo caminho sequencial legado.
-# P4: este conjunto deve espelhar exatamente as tools padrão
-# declaradas com `pure=True` (ver app/tools/base.py e
-# `declared_pure_tool_names()` abaixo). `ToolType.ANALYSIS` NÃO é o
-# critério — run_command é ANALYSIS mas nunca entra aqui.
 PURE_READ_TOOLS = frozenset({
     "read_file",
     "list_files",
@@ -67,7 +42,7 @@ def all_pure_read(names) -> bool:
 
 
 def declared_pure_tool_names(registry) -> set[str]:
-    """Nomes das tools registradas com `pure=True` (P4, só observa).
+    """Nomes das tools registradas com `pure=True` (só observa).
 
     Usado para verificar coerência entre a declaração de cada tool e
     `PURE_READ_TOOLS`. Não é usado no caminho quente: o gate do batch
@@ -104,7 +79,7 @@ def run_concurrent(
         start = time.monotonic()
         try:
             value = fn()
-        except Exception as error:  # noqa: BLE001 — capturado por item
+        except Exception as error:
             results[index] = BatchItemResult(
                 success=False,
                 value=None,
@@ -127,8 +102,6 @@ def run_concurrent(
             for index, fn in enumerate(calls)
         ]
         for future in futures:
-            # _run nunca levanta (captura tudo), mas join propaga
-            # KeyboardInterrupt/SystemExit normalmente.
             future.result()
 
     wall_ms = (time.monotonic() - batch_start) * 1000

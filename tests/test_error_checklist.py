@@ -102,8 +102,6 @@ def test_reset_removes_all_items(checklist, llm):
 def test_generate_regenerates_from_scratch_discarding_old_items(
     checklist, llm
 ):
-    # Regra central do design: cada generate() substitui os itens
-    # anteriores por completo — não acumula entre rodadas de falha.
     _llm_returns(llm, ["falha antiga 1", "falha antiga 2"])
     checklist.generate("npm test", "primeira saida")
     assert checklist.pending_count == 2

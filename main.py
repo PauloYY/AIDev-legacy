@@ -149,9 +149,6 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     task_context_builder = TaskContextBuilder(
-        # Etapa 4: limita resultados gigantes de dependencies no contexto
-        # do Executor (veredito no início é preservado + omissão marcada).
-        # None = comportamento legado integral.
         max_result_chars=(
             TaskContextBuilder.DEFAULT_MAX_RESULT_CHARS
             if Config.compact_context

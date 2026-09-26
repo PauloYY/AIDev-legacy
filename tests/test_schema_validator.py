@@ -40,7 +40,7 @@ def test_accepts_valid_arguments(validator, tool):
     validator.validate(
         tool,
         {"project_name": "p", "file_path": "a.py"},
-    )  # não deve lançar
+    )
 
 
 def test_rejects_invented_argument_with_suggestion(validator, tool):

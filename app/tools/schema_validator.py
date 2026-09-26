@@ -4,8 +4,6 @@ from typing import Any
 from app.tools.base import Tool
 
 
-# Mapeia os tipos do JSON Schema (usados nas `definition` das tools)
-# para os tipos Python equivalentes, para permitir checagem de tipo.
 JSON_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
     "string": str,
     "number": (int, float),
@@ -15,8 +13,6 @@ JSON_TYPE_MAP: dict[str, type | tuple[type, ...]] = {
     "array": list,
 }
 
-# Abaixo desse score (0-1), uma sugestão de correção não é exibida
-# por ser pouco confiável (ex.: nomes completamente diferentes).
 SUGGESTION_CUTOFF = 0.5
 
 
@@ -111,8 +107,6 @@ class SchemaValidator:
             if python_type is None:
                 continue
 
-            # bool é subclasse de int em Python; sem esse caso especial
-            # um bool passaria despercebido como "integer"/"number".
             if isinstance(value, bool) and python_type is not bool:
                 valid = False
             else:

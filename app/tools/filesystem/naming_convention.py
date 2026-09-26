@@ -1,11 +1,6 @@
 import re
 from pathlib import Path
 
-# Segmentos finais que não fazem parte do "nome" em si — sufixos de
-# convenção largamente usados (arquivo de teste, tipagem, minificado)
-# que, se não removidos antes de classificar o estilo, gerariam falso
-# positivo (ex.: "RideService.test.js" pareceria dot.case, mesmo o
-# arquivo sendo claramente PascalCase + sufixo de teste).
 _MARKER_SEGMENTS = {"test", "tests", "spec", "specs", "min", "d"}
 
 

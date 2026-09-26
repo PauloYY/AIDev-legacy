@@ -193,9 +193,6 @@ def test_render_includes_known_commands_section(memory, projects_root):
 
 
 def test_jest_command_is_recognized_as_test_command(memory):
-    # "jest" não contém a substring "test" — precisa estar na lista
-    # de keywords explicitamente, senão o comando nunca é lembrado
-    # nem reconhecido como gatilho de investigação após falha.
     memory.record(
         iteration=1,
         tool="run_command",
@@ -212,8 +209,6 @@ def test_last_action_empty_history_is_not_failed_test(memory):
 
 
 def test_last_action_failed_jest_command_is_detected(memory):
-    # Caso real que motivou a checagem: 'npm test' rodando jest por
-    # baixo dos panos, retornando exit code 1 com testes falhando.
     memory.record(
         iteration=1,
         tool="run_command",
@@ -293,8 +288,6 @@ def test_only_the_most_recent_action_counts_as_trigger(memory):
         success=True,
     )
 
-    # O gatilho só vale logo em seguida ao teste que falhou — depois
-    # que outra ação já foi registrada, a exceção não se aplica mais.
     assert memory.last_run_command_failed_test_or_build() is False
 
 def test_investigation_budget_available_when_never_used(memory):

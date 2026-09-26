@@ -129,7 +129,7 @@ def test_ensure_restricted_network_ready_creates_missing_network_and_proxy(
         calls.append(command)
 
         if command[:3] == ["docker", "network", "inspect"]:
-            return subprocess.CompletedProcess(command, 1)  # não existe
+            return subprocess.CompletedProcess(command, 1)
 
         if command[:3] == ["docker", "inspect", "-f"]:
             return subprocess.CompletedProcess(command, 1, stdout="")
@@ -173,7 +173,7 @@ def test_ensure_restricted_network_ready_skips_when_already_up(monkeypatch):
         calls.append(command)
 
         if command[:3] == ["docker", "network", "inspect"]:
-            return subprocess.CompletedProcess(command, 0)  # já existe
+            return subprocess.CompletedProcess(command, 0)
 
         if command[:3] == ["docker", "inspect", "-f"]:
             return subprocess.CompletedProcess(command, 0, stdout="true")

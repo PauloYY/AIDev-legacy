@@ -25,7 +25,6 @@ def registry():
     return registry
 
 
-# run_command claramente de leitura — AINDA ASSIM não-puro ---------------
 @pytest.mark.parametrize("command", [
     "python3 --version",
     "ls",
@@ -36,12 +35,11 @@ def test_read_like_run_command_is_not_pure(registry, command):
     """Comandos com cara de leitura não entram em batch (sem sniffing)."""
     tool = registry.get("run_command")
     assert tool.pure is False
-    assert tool.type == ToolType.ANALYSIS  # ainda pode ser dependency
+    assert tool.type == ToolType.ANALYSIS
     assert is_pure_read_tool("run_command") is False
     assert all_pure_read(["read_file", "run_command"]) is False
 
 
-# run_command de teste/build — conservador --------------------------------
 @pytest.mark.parametrize("command", [
     "python -m pytest -q",
     "npm test",
@@ -53,7 +51,6 @@ def test_test_build_run_command_is_not_pure(command):
     assert all_pure_read(["run_command"]) is False
 
 
-# run_command que modifica arquivos ----------------------------------------
 @pytest.mark.parametrize("command", [
     "cat > out.txt <<'EOF'\nhi\nEOF",
     "echo x >> notes.txt",
@@ -65,7 +62,6 @@ def test_mutating_run_command_is_not_pure(command):
     assert is_pure_read_tool("run_command") is False
 
 
-# comando ambíguo — em dúvida, sequencial ----------------------------------
 @pytest.mark.parametrize("command", [
     "echo hello",
     "grep -r foo .",
@@ -77,7 +73,6 @@ def test_ambiguous_run_command_is_not_pure(command):
     assert all_pure_read(["read_file", "run_command"]) is False
 
 
-# tools puras inalteradas ----------------------------------------------------
 @pytest.mark.parametrize("name", [
     "read_file", "list_files", "find_references", "list_symbols",
 ])
@@ -95,14 +90,12 @@ def test_non_pure_tools(registry):
 
 
 def test_tool_pure_defaults_to_false():
-    # Construtor sem `pure` mantém o default conservador.
     from app.tools.base import Tool, ToolType
     legacy = Tool(name="x", function=lambda: None, definition={},
                   type=ToolType.EXECUTION)
     assert legacy.pure is False
 
 
-# gate do batch ---------------------------------------------------------------
 def test_batch_gate():
     assert all_pure_read(["read_file", "list_files"]) is True
     assert all_pure_read(["read_file"]) is True
@@ -114,7 +107,6 @@ def test_batch_gate():
     assert all_pure_read([None, 123]) is False
 
 
-# coerência --------------------------------------------------------------------
 def test_coherence_between_declaration_and_parallel_gate(registry):
     """PURE_READ_TOOLS espelha exatamente as tools com pure=True."""
     assert declared_pure_tool_names(registry) == set(PURE_READ_TOOLS)

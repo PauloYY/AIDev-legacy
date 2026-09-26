@@ -1,15 +1,4 @@
-"""Etapa 4 — redução de chamadas e contexto do LLM.
-
-Cobre os 18 casos obrigatórios + política de skip + métricas, sem
-alterar nenhum teste existente:
-1-2.   Summary Updater pulado p/ leituras; mantido p/ escritas/testes.
-3-5.   Contexto compacto mantém objetivo/estado/erros.
-6-7.   Outputs grandes compactados; info crítica de testes preservada.
-8-13.  Agrupamento seguro (leituras em lote; resto sequencial).
-14-17. Short repair, full retry, finish gate e final verification intactos.
-18.    Comportamento legado com flags desativadas.
-Métricas: component_stats + novas linhas do perf summary.
-"""
+"""Redução de chamadas e contexto do LLM."""
 
 import json
 
@@ -35,10 +24,6 @@ from app.llm.models import Usage
 from app.llm.usage import UsageTracker
 from app.tools.registry import ToolRegistry
 
-
-# --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
 
 def _task(tool, arguments, dependencies=None):
     return Task(tool=tool, arguments=arguments,
@@ -119,10 +104,6 @@ def _events(trace, name):
     return [e for e in trace.read_events() if e["event"] == name]
 
 
-# --------------------------------------------------------------------------
-# 1-2. política do Summary Updater
-# --------------------------------------------------------------------------
-
 @pytest.mark.parametrize("tool,arguments", [
     ("read_file", {"project_name": "p", "file_path": "a.py"}),
     ("list_files", {"project_name": "p"}),
@@ -160,8 +141,6 @@ def test_updater_still_called_when_needed(tmp_path, monkeypatch, tool,
                                            arguments):
     """Caso 2: escrita/teste/checagem continuam atualizando o resumo."""
     monkeypatch.setattr(Config, "smart_summary", True)
-    # Comportamento da Etapa 4/5: sem os skips estendidos da Etapa 6
-    # (cobertos em test_stage6_executor_summary.py).
     monkeypatch.setattr(Config, "compact_executor", False)
     trace = _trace(tmp_path)
     updater = T.FakeSummaryUpdater(T.FakeSummary("resumo"))
@@ -178,10 +157,6 @@ def test_updater_still_called_when_needed(tmp_path, monkeypatch, tool,
     assert len(_events(trace, "summary_updated")) == 1
     assert _events(trace, "summary_skipped") == []
 
-
-# --------------------------------------------------------------------------
-# 3-5. contexto compacto preserva informação
-# --------------------------------------------------------------------------
 
 def test_compact_context_keeps_objective_and_state(
         projects_root, tmp_path, monkeypatch):
@@ -221,9 +196,7 @@ def test_compact_context_keeps_objective_and_state(
     )
 
     assert runner.run(objective="obj", project_name="p") == "done"
-    # Objetivo chega intacto ao Planner (template inalterado).
     assert planner.objectives and all(o == "obj" for o in planner.objectives)
-    # Estado atual: listagem integral quando a estrutura mudou.
     assert "- a.py" in planner.received_contexts[0]
     assert "CURRENT PROJECT FILES" in planner.received_contexts[0]
     assert "construir o projeto" in planner.received_contexts[0]
@@ -275,10 +248,6 @@ def test_unchanged_file_list_is_compact_but_explicit(
     assert state3 != state2
 
 
-# --------------------------------------------------------------------------
-# 6-7. compactação de outputs
-# --------------------------------------------------------------------------
-
 def test_big_dependency_results_are_capped_head_first():
     """Caso 6: output gigante vira cabeça + marcador (nunca silencioso)."""
     big = "STATUS: success (exit code 0)\n" + "y" * 60000
@@ -293,7 +262,7 @@ def test_big_dependency_results_are_capped_head_first():
     assert out.startswith("PARENT TASK:")
     assert "STATUS: success (exit code 0)" in out
     assert "truncated result" in out
-    assert "600" in out  # total indicado
+    assert "600" in out
     assert len(out) < 5000
 
 
@@ -317,7 +286,7 @@ def test_error_checklist_still_receives_full_result(tmp_path,
                                                       monkeypatch):
     """Caso 7: extração de erros usa o resultado INTEGRAL.
 
-    Caminho legado (Fase 6 usa análise unificada; ver teste próprio
+    Caminho legado (sa análise unificada; ver teste próprio
     de resultado integral em test_fase6_unified_errors.py).
     """
     monkeypatch.setattr(Config, "error_analyzer", False)
@@ -336,10 +305,6 @@ def test_error_checklist_still_receives_full_result(tmp_path,
     assert checklist.captured[0][1] == big
     assert "STATUS: failure (exit code 1)" in checklist.captured[0][1]
 
-
-# --------------------------------------------------------------------------
-# 8-13. agrupamento seguro
-# --------------------------------------------------------------------------
 
 def test_independent_reads_run_as_parallel_batch(
         projects_root, tmp_path, monkeypatch):
@@ -467,8 +432,6 @@ def test_write_then_read_sees_written_content(projects_root, tmp_path,
     )
 
     assert runner.run(objective="obj", project_name="p") == "done"
-    # contexts[0]=iter1, [1]=iter2 (traz o RESULTADO do write),
-    # [2]=iter3/finish (traz o RESULTADO do read da iter2).
     assert "File written successfully" in planner.received_contexts[1]
     assert "conteudo-x-123" in planner.received_contexts[2]
 
@@ -504,10 +467,6 @@ def test_parallel_batch_failure_isolated(projects_root, tmp_path,
     assert [e["success"] for e in dep_results] == [True, False]
     assert runner._stats.parallel_batches == 1
 
-
-# --------------------------------------------------------------------------
-# 14-15. retry intacto com flags ligadas (LLM roteirizada)
-# --------------------------------------------------------------------------
 
 class _ScriptedProvider:
     def __init__(self, contents):
@@ -624,10 +583,6 @@ def test_full_retry_still_works_with_flags_on(
         "short_repair", "full_context"]
 
 
-# --------------------------------------------------------------------------
-# 16-17. finish gate e verificação intactos
-# --------------------------------------------------------------------------
-
 def test_finish_gate_still_blocks_with_flags_on(tmp_path, monkeypatch):
     """Caso 16: finish com problema bloqueia e depois aceita."""
     monkeypatch.setattr(Config, "smart_summary", True)
@@ -706,10 +661,6 @@ def test_final_verification_receives_summary(tmp_path, monkeypatch):
     assert final.verify_calls[0]["summary"] == "novo resumo"
 
 
-# --------------------------------------------------------------------------
-# 18. comportamento legado com flags off
-# --------------------------------------------------------------------------
-
 def test_legacy_updater_called_for_reads_when_flag_off(
         tmp_path, monkeypatch):
     """Caso 18a: SMART off → updater roda até p/ leitura."""
@@ -775,10 +726,6 @@ def test_legacy_full_listing_when_compact_off(projects_root, tmp_path,
     assert "- a.py" in planner.received_contexts[1]
     assert "no changes since last check" not in planner.received_contexts[1]
 
-
-# --------------------------------------------------------------------------
-# métricas: component_stats + novas linhas do resumo
-# --------------------------------------------------------------------------
 
 def test_component_stats_aggregates_per_component():
     tracker = UsageTracker()

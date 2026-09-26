@@ -24,9 +24,6 @@ class Planner:
         self.tools = tools
         self._cached_tools_context: str | None = None
         self._cached_tools_names: tuple[str, ...] = ()
-        # Último conteúdo bruto retornado pela LLM (mesmo quando o
-        # parse falha). O Runner usa para montar o short repair prompt
-        # sem precisar reenviar o contexto completo. Só diagnóstico.
         self.last_raw_response: str | None = None
 
     def plan(
@@ -39,8 +36,8 @@ class Planner:
         """Decisão normal do Planner.
 
         Legado: prompt completo via _build_prompt().
-        Etapa 5 (AIDEV_COMPACT_PLANNER=1): prompt compacto via
-        _build_prompt_compact() — mesmo objetivo, mesmas regras
+        Com AIDEV_COMPACT_PLANNER=1: prompt compacto via
+        _build_prompt_compact() - mesmo objetivo, mesmas regras
         essenciais e mesmas tools, com representação mais curta.
         Short repair nunca passa por aqui (usa plan_with_prompt).
         """
@@ -71,8 +68,6 @@ class Planner:
                 context,
             )
 
-        # Etapa 2B: instrumentação observacional — mede cada componente
-        # do prompt sem alterar conteúdo, ordem ou decisão.
         context_breakdown = None
         try:
             if use_compact:
@@ -82,7 +77,6 @@ class Planner:
                 sections = self.build_prompt_sections(objective, context)
             context_breakdown = self.measure_prompt_sections(sections)
         except Exception as error:
-            # A medição nunca pode quebrar o Planner.
             logger.warning(
                 "Falha na instrumentação do contexto do Planner: %s",
                 error,
@@ -126,7 +120,6 @@ class Planner:
             )
         except TypeError:
             try:
-                # Compatibilidade com doubles antigos sem `request_type`.
                 response = self.llm.generate(
                     messages=[
                         Message(
@@ -139,9 +132,6 @@ class Planner:
                     context_breakdown=context_breakdown,
                 )
             except TypeError:
-                # Compatibilidade com doubles de LLM antigos que não
-                # aceitam o kwarg de instrumentação (ex.: FakeLLM em
-                # testes legados).
                 response = self.llm.generate(
                     messages=[
                         Message(
@@ -153,8 +143,6 @@ class Planner:
                     iteration=iteration,
                 )
 
-        # Guarda o bruto ANTES de validar: se o parse falhar, o Runner
-        # ainda consegue mostrar a decisão anterior no repair prompt.
         try:
             self.last_raw_response = response.content
         except Exception:
@@ -174,11 +162,7 @@ class Planner:
 
         return self.parser.parse(response.content)
 
-    # ---------- Fase 3 Etapa 2: short repair prompt ----------
 
-    # Marcadores usados para escolher a dica direcionada. São
-    # os mesmos textos que o validador/parser já emitem — nenhuma regra
-    # nova, só classificação para montar o reparo mínimo.
     _HINT_DEPENDENCY_ONLY = "can only be used as a dependency"
     _HINT_UNKNOWN_TOOL = "Tool not found"
     _HINT_BAD_DEPENDENCY = "cannot be used as a dependency"
@@ -186,8 +170,6 @@ class Planner:
         "required", "property", "properties", "schema", "Schema",
         "argument", "additional",
     )
-    # Versão minúscula (inclui variações com maiúscula inicial, como
-    # "Unknown argument ... Valid arguments", do schema).
     _HINT_SCHEMA_LOWER = (
         "required", "property", "properties", "schema", "argument",
         "arguments", "missing", "unknown", "valid", "did you mean",
@@ -204,7 +186,7 @@ class Planner:
     def full_prompt_chars(self, objective: str, context: str) -> int:
         """Tamanho aproximado do prompt completo (só mede, p/ o trace).
 
-        Etapa 5: mede o que será realmente enviado — prompt compacto
+        Mede o que será realmente enviado - prompt compacto
         quando AIDEV_COMPACT_PLANNER=1, legado caso contrário.
         """
         try:
@@ -619,23 +601,14 @@ CURRENT CONTEXT:
         self._cached_tools_names = names
         return result
 
-    # ---------- Etapa 5: compactação inteligente do Planner ----------
 
-    # Tetos do schema compacto (mais agressivos que _compact_tool_schema,
-    # que usa 300/160 para hints de repair). O validador continua usando
-    # os schemas INTEGRAIS — o prompt só precisa do suficiente para
-    # gerar uma decisão válida: nome, required, nomes/tipos dos args e
-    # a distinção entre tools. Regras de uso (quando validar, o que
-    # evitar) vivem no template estático, não na descrição da tool
-    # (deduplicação: run_command/check_project/list_symbols repetiam o
-    # mesmo conselho nos dois lugares).
     COMPACT_TOOL_DESC_CHARS = 150
     COMPACT_TOOL_PROP_CHARS = 80
 
     def _build_tools_context_compact(self) -> str:
         """Schemas mínimos das tools (nome, required, props, desc curta).
 
-        Reutiliza a mesma ideia de _compact_tool_schema() (Etapa 2),
+        Reutiliza a mesma ideia de _compact_tool_schema(),
         com tetos menores. Nunca remove nome/required/tipos/diferenças
         entre tools. O cache é separado do contexto integral.
         """
@@ -657,8 +630,6 @@ CURRENT CONTEXT:
                     if isinstance(spec, dict):
                         prop_type = str(spec.get("type", ""))
                         prop_desc = str(spec.get("description") or "")
-                        # "type + essencial da descrição" cabe em 80 chars
-                        # e preserva o tipo (obrigatório p/ decisão válida).
                         text = (
                             f"{prop_type}: {prop_desc}"
                             if prop_desc else prop_type
@@ -675,16 +646,12 @@ CURRENT CONTEXT:
                     "properties": compact_props,
                 })
             except Exception:
-                # Tool ilegível nunca pode quebrar o Planner: cai para
-                # o schema integral dessa tool.
                 try:
                     compact_defs.append(
                         self.tools.get(tool_name).definition)
                 except Exception:
                     continue
 
-        # Sem indentação: a LLM lê JSON corrido sem perda; economiza
-        # ~20% de whitespace repetido a cada chamada do Planner.
         result = json.dumps(
             compact_defs, ensure_ascii=False, separators=(",", ":"))
         self._cached_compact_tools_context = result
@@ -733,7 +700,7 @@ CURRENT CONTEXT:
         objective: str,
         context: str,
     ) -> str:
-        """Template estático compacto (Etapa 5).
+        """Template estático compacto.
 
         Compactação SEMÂNTICA, não truncamento: cada seção do prompt
         integral tem um correspondente aqui com as mesmas regras

@@ -9,9 +9,6 @@ from app.tools.registry import ToolRegistry
 
 class DecisionParser:
     def __init__(self, tools: ToolRegistry | None = None):
-        # Opcional para não quebrar quem instancia sem tools (ex.:
-        # testes existentes que só testam o parsing "normal"). Sem
-        # tools, a auto-recuperação abaixo fica desativada.
         self.tools = tools
 
     def parse(self, content: str) -> Decision:

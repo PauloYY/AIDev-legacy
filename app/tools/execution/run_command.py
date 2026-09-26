@@ -16,7 +16,7 @@ def _run_direct_without_sandbox(
 ) -> subprocess.CompletedProcess:
     """Executa `command` via shell fora do Docker, com kill da árvore.
 
-    Com `shell=True` existe um intermediário (`/bin/sh -c ...`) e o
+    Com `shell=True` existe um intermediário (`/bin/sh -c...`) e o
     trabalho real roda como neto. O `subprocess.run()` padrão mata só
     o filho direto no timeout, orfanando o resto (ex.: `python3 loop.py`
     com PPID=1 a 100% CPU). Por isso o processo é iniciado como líder
@@ -40,7 +40,6 @@ def _run_direct_without_sandbox(
         stdout, stderr = proc.communicate(input=stdin, timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_process_group(proc)
-        # Drena os pipes e faz reap do filho direto (evita zumbi).
         try:
             proc.communicate()
         except Exception:
@@ -64,9 +63,6 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
     except (ProcessLookupError, PermissionError, OSError):
         pgid = None
 
-    # Trava de segurança: só mata se o grupo for o do próprio filho
-    # (líder de sessão criado com start_new_session=True). Nunca o
-    # grupo do processo atual.
     if pgid is not None and pgid == proc.pid and pgid != os.getpgrp():
         try:
             os.killpg(pgid, signal.SIGKILL)
@@ -89,7 +85,7 @@ def run_command(
     """Executa um comando de shell dentro da pasta do projeto.
 
     Generaliza a validação do agente para QUALQUER linguagem ou framework
-    (ex.: "python main.py", "npm test", "node app.js", "go test ./...",
+    (ex.: "python main.py", "npm test", "node app.js", "go test./...",
     "cargo run"), desde que o runtime necessário esteja disponível na
     imagem de sandbox (veja docker/Dockerfile). Se o runtime não estiver
     instalado, o comando simplesmente falha com exit code diferente de
@@ -217,12 +213,6 @@ definition = {
 }
 
 
-# P4: ANALYSIS aqui significa apenas "pode ser dependency" (ex.:
-# rodar testes para coletar evidência antes de agir) — NÃO significa
-# "sem efeitos colaterais". Qualquer comando shell pode mutar arquivos
-# via redirect/heredoc/etc., então run_command é sempre não-puro
-# (pure=False, o default): nunca entra em batch paralelo, mesmo para
-# comandos com cara de leitura como "--version" ou "ls".
 tool = Tool(
     name="run_command",
     function=run_command,

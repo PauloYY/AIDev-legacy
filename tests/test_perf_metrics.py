@@ -1,9 +1,4 @@
-"""Fase 3 — métricas de performance e otimizações.
-
-Cobre: timing/sucesso por tool (incl. timeout/exit code de run_command),
-contadores do Runner, formato do resumo, cache do finish-check (OPT-1)
-e poda de diretórios de dependência no list_files (OPT-2).
-"""
+"""Métricas de performance e otimizações."""
 
 import pytest
 
@@ -269,7 +264,7 @@ def test_finish_check_cached_across_blocked_finishes(projects_root,
         final_verification=OnceProblems(),
     )
     assert runner.run(objective="obj", project_name="p") == "b"
-    assert len(calls) == 1  # segundo finish reaproveitou o check
+    assert len(calls) == 1
     assert runner._stats.finish_blocks == 1
 
 
@@ -320,7 +315,7 @@ def test_finish_check_reruns_after_write(projects_root, monkeypatch):
             result=FinalVerificationResult(FinalVerificationResult.OK)),
     )
     assert runner.run(objective="obj", project_name="p") == "b"
-    assert len(calls) == 2  # escrita invalidou: check rodou de novo
+    assert len(calls) == 2
     assert runner._stats.finish_blocks == 1
 
 

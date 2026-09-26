@@ -5,8 +5,6 @@ from app.tools.base import Tool, ToolType
 from app.tools.config import get_projects_dir
 
 
-# --- Python: via AST real, é preciso -----------------------------------
-
 def _list_python_symbols(content: str) -> list[str]:
     try:
         tree = ast.parse(content)
@@ -57,8 +55,6 @@ def _list_python_symbols(content: str) -> list[str]:
 
     return symbols
 
-
-# --- JS/TS: sem parser disponível, regex sobre os padrões comuns -------
 
 _JS_EXPORT_PATTERNS = [
     (
@@ -114,7 +110,6 @@ def _list_js_symbols(content: str) -> list[str]:
         for match in pattern.finditer(content):
             add(match.group(1), kind)
 
-    # export { a, b as c }
     for match in re.finditer(r"export\s*{\s*([^}]+)\s*}", content):
         for part in match.group(1).split(","):
             part = part.strip()
@@ -123,12 +118,10 @@ def _list_js_symbols(content: str) -> list[str]:
             name = part.split(" as ")[-1].strip() if " as " in part else part
             add(name, "export { }")
 
-    # export default algumaCoisa;  (referência a algo já definido)
     match = re.search(r"export\s+default\s+(\w+)\s*;", content)
     if match:
         add(match.group(1), "export default (referência)")
 
-    # module.exports = { a, b, c: valor }
     match = re.search(r"module\.exports\s*=\s*{([^}]*)}", content, re.DOTALL)
     if match:
         for part in match.group(1).split(","):
@@ -139,7 +132,6 @@ def _list_js_symbols(content: str) -> list[str]:
             if key:
                 add(key, "module.exports = { }")
 
-    # module.exports = NomeUnico;  (uma função/classe/valor só)
     match = re.search(
         r"module\.exports\s*=\s*(\w+)\s*;?\s*$", content, re.MULTILINE
     )
@@ -148,8 +140,6 @@ def _list_js_symbols(content: str) -> list[str]:
 
     return symbols
 
-
-# --- Go: regex sobre declarações top-level ------------------------------
 
 _GO_PATTERNS = [
     (
@@ -180,8 +170,6 @@ def _list_go_symbols(content: str) -> list[str]:
 
     return symbols
 
-
-# --- Fallback genérico: Java, Ruby, PHP, Rust, C/C++, etc. -------------
 
 _GENERIC_PATTERNS = [
     (

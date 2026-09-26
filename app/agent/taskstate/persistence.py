@@ -1,17 +1,4 @@
-"""Fase 4 (integração) — persistência do TaskState em disco.
-
-Arquivo por projeto: `<projects>/<nome>/.aidev/task_state.json`
-(mesmo diretório do `summary.md`, padrão já estabelecido).
-
-Regras:
-- Escrita ATÔMICA (tmp + os.replace): processo interrompido nunca
-  deixa JSON parcial no arquivo final.
-- Falha de persistência NUNCA derruba o agente (retorna ok=False).
-- Recuperação SOMENTE para a mesma tarefa (task_id = sha1 do prompt
-  canônico): tarefa diferente → arquiva o antigo
-  (`task_state.prev-<id>.json`, sem apagar) e começa estado novo.
-- Usa `TaskState.to_dict/from_dict` (serialização determinística).
-"""
+"""Persistência do TaskState em disco."""
 
 import json
 import logging

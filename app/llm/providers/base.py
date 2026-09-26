@@ -19,7 +19,7 @@ class LLMProvider(ABC):
         messages: list[Message],
         tools: list[dict] | None = None,
     ) -> LLMResponse:
-        """Variante assíncrona (Etapa 3). Default: roda o `generate`
+        """Variante assíncrona. Default: roda o `generate`
         síncrono numa thread, sem bloquear o event loop. Providers com
         I/O HTTP nativamente assíncrono (ex.: httpx.AsyncClient)
         sobrescrevem com implementação real. O caminho síncrono segue

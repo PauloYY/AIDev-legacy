@@ -1,10 +1,4 @@
-"""Etapa 2E — observabilidade e retry do ProjectSummaryUpdater.
-
-Cobre: instrumentação (component/iteration/duração), retry de resposta
-vazia e erro transitório, sem retry em erro permanente, backoff
-injetável, iteration via Runner, ausência de dados sensíveis em logs,
-stats agregadas e seção CLI.
-"""
+"""Observabilidade e retry do ProjectSummaryUpdater."""
 
 import logging
 
@@ -30,7 +24,7 @@ class _ScriptedLLM:
 
     def generate(self, messages, tools=None, component=None,
                  iteration=None, attempt=1):
-        from app.llm.utils import estimate_tokens  # noqa
+        from app.llm.utils import estimate_tokens
         import time
 
         self.calls.append({
@@ -84,8 +78,6 @@ def _task():
     )
 
 
-# --- Instrumentação ---
-
 def test_registra_component_iteration_prompt_completion_duracao(projects_root):
     updater, llm, _ = _make_updater(["resumo válido"])
     updater.update(
@@ -105,8 +97,6 @@ def test_registra_component_iteration_prompt_completion_duracao(projects_root):
     assert records[0].duration_ms >= 0.0
 
 
-# --- Resposta normal: sem retry ---
-
 def test_resposta_valida_nao_faz_retry(projects_root):
     updater, llm, sleeps = _make_updater(["resumo ok"])
     out = updater.update(
@@ -117,8 +107,6 @@ def test_resposta_valida_nao_faz_retry(projects_root):
     assert len(llm.calls) == 1
     assert sleeps == []
 
-
-# --- Vazio → válido ---
 
 def test_vazio_depois_valido(projects_root):
     updater, llm, sleeps = _make_updater(["", "resumo recuperado"])
@@ -164,8 +152,6 @@ def test_todas_vazias_falha_explicita_com_3_chamadas(projects_root):
     assert stats["empty_responses"] == 3
 
 
-# --- Erro transitório vs permanente ---
-
 def test_erro_transitorio_faz_retry(projects_root):
     updater, llm, sleeps = _make_updater(
         [LLMConnectionError("read timed out"), "resumo ok"]
@@ -195,14 +181,10 @@ def test_erro_permanente_nao_faz_retry(projects_root):
     assert sleeps == []
 
 
-# --- Backoff sem espera real ---
-
 def test_backoff_valores_esperados():
     assert ProjectSummaryUpdater.RETRY_BACKOFF_SECONDS == (1.0, 2.0)
     assert ProjectSummaryUpdater.MAX_SUMMARY_ATTEMPTS == 3
 
-
-# --- Runner passa iteration ---
 
 def test_runner_passa_iteration_ao_updater():
     from tests.test_runner import (
@@ -242,8 +224,6 @@ def test_runner_passa_iteration_ao_updater():
     assert seen["iteration"] == 1
 
 
-# --- Sem dados sensíveis ---
-
 def test_logs_e_erro_sem_conteudo_sensivel(projects_root, caplog):
     secret = "SUPER-SECRETO-" * 500
     updater, llm, _ = _make_updater(["", "", ""])
@@ -264,8 +244,6 @@ def test_logs_e_erro_sem_conteudo_sensivel(projects_root, caplog):
     assert secret not in str(exc_info.value)
     assert "iteration=7" in str(exc_info.value)
 
-
-# --- Stats + CLI ---
 
 def test_stats_agregadas_e_secao_cli(projects_root):
     updater, llm, _ = _make_updater(["resumo um", "", "resumo dois"])
@@ -310,8 +288,6 @@ def test_breakdown_e_summary_preservados():
     assert "Chamadas à LLM: 1" in tracker.summary()
 
 
-# --- Duration registrada mesmo em exceção (LLMClient real) ---
-
 def test_client_registra_duracao_em_excecao():
     class Boom:
         def generate(self, messages, tools=None):
@@ -331,8 +307,6 @@ def test_client_registra_duracao_em_excecao():
     assert records[0].duration_ms >= 0.0
     assert records[0].iteration == 9
 
-
-# --- Sintéticos A–F ---
 
 def test_cli_imprime_secao_quando_presente(capsys):
     from app.agent.events import AgentEvent
@@ -374,7 +348,7 @@ def test_sinteticos_a_ate_f(projects_root):
                 result="ok", iteration=1,
             )
             result = "ok"
-        except Exception as error:  # noqa
+        except Exception as error:
             result = type(error).__name__
         stats = llm.usage.project_summary_stats()
         print(f"{name} | {stats['attempts']} | {stats['retries']} | "

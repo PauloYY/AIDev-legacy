@@ -1,9 +1,4 @@
-"""Etapa 2C — compactação do action_history.
-
-Garante que write_file não vaza conteúdo integral, que argumentos
-grandes são limitados, que a semântica (path/tool/status/comando) é
-preservada e que os argumentos reais do Executor seguem intactos.
-"""
+"""Compactação do action_history."""
 
 import pytest
 
@@ -25,9 +20,8 @@ def _old_style_history_line(iteration, tool, arguments, success, result_summary)
     return f"[{iteration}] (task, {status}) {tool}({arguments!r}) -> {result_summary}"
 
 
-# Teste 1 — write_file não expõe conteúdo completo.
 def test_write_file_hides_full_content(memory):
-    big = "SECRET-CONTENT-" * 500  # ~7KB
+    big = "SECRET-CONTENT-" * 500
     memory.record(
         iteration=1,
         tool="write_file",
@@ -40,14 +34,13 @@ def test_write_file_hides_full_content(memory):
         success=True,
     )
     history = memory.render_history()
-    assert "models/user.py" in history  # path preservado
-    assert "OK" in history  # status preservado
-    assert big not in history  # conteúdo completo NÃO aparece
+    assert "models/user.py" in history
+    assert "OK" in history
+    assert big not in history
     assert "SECRET-CONTENT" not in history
-    assert "omitted" in history.lower()  # indica omissão + tamanho
+    assert "omitted" in history.lower()
 
 
-# Teste 2 — conteúdo pequeno: comportamento consistente (sempre omite).
 def test_small_content_is_also_omitted_consistently(memory):
     memory.record(
         iteration=1,
@@ -62,13 +55,11 @@ def test_small_content_is_also_omitted_consistently(memory):
     )
     history = memory.render_history()
     assert "a.py" in history
-    # Mesmo pequeno, content vira placeholder (consistência).
     assert "'content': '<omitted: 1 chars>'" in history
 
 
-# Teste 3 — argumentos grandes nunca geram dezenas de KB.
 def test_large_arguments_are_capped(memory):
-    huge_command = "echo " + "y" * 50_000  # 50KB de comando
+    huge_command = "echo " + "y" * 50_000
     memory.record(
         iteration=1,
         tool="run_command",
@@ -77,11 +68,10 @@ def test_large_arguments_are_capped(memory):
         success=True,
     )
     history = memory.render_history()
-    assert len(history) < 5_000  # longe de dezenas de KB
+    assert len(history) < 5_000
     assert huge_command not in history
-    assert "chars]" in history  # indicador de truncamento
+    assert "chars]" in history
 
-    # stdin grande também é limitado.
     memory.reset()
     memory.record(
         iteration=1,
@@ -97,7 +87,6 @@ def test_large_arguments_are_capped(memory):
     assert len(memory.render_history()) < 5_000
 
 
-# Teste 4 — outras tools continuam representadas corretamente.
 def test_other_tools_preserve_semantics(memory):
     memory.record(
         iteration=1,
@@ -142,7 +131,6 @@ def test_other_tools_preserve_semantics(memory):
     assert "list_symbols" in history
 
 
-# Teste 5 — truncamento de result continua funcionando.
 def test_result_truncation_still_works(memory):
     big_result = "R" * 5_000
     memory.record(
@@ -154,11 +142,10 @@ def test_result_truncation_still_works(memory):
     )
     history = memory.render_history()
     assert big_result not in history
-    assert "[+4700 chars]" in history  # 5000-300
-    assert "R" * 300 in history  # prefixo preservado
+    assert "[+4700 chars]" in history
+    assert "R" * 300 in history
 
 
-# Teste 6 — histórico preserva sequência/ordem.
 def test_history_preserves_order(memory):
     for i in range(1, 4):
         memory.record(
@@ -177,7 +164,6 @@ def test_history_preserves_order(memory):
     assert lines[2].startswith("[3]")
 
 
-# Teste 7 — informação semântica (tool/path/status/comando).
 def test_semantic_info_preserved(memory):
     memory.record(
         iteration=2,
@@ -205,7 +191,6 @@ def test_semantic_info_preserved(memory):
     assert "python -m pytest" in history
 
 
-# Teste 8 — argumentos reais não são modificados.
 def test_real_arguments_not_mutated(memory):
     args = {
         "project_name": "p",
@@ -217,18 +202,13 @@ def test_real_arguments_not_mutated(memory):
         iteration=1, tool="write_file", arguments=args,
         result="ok", success=True,
     )
-    # Dict original intacto (mesmo objeto, mesmo conteúdo).
     assert args == snapshot
     assert len(args["content"]) == len(snapshot["content"])
-    # E o armazenado no ActionRecord também é integral (lógica interna
-    # como known_commands/failure-gate usa o valor cheio).
     stored = memory._actions[0].arguments
     assert stored["content"] == snapshot["content"]
-    # Só a representação é compacta.
     assert snapshot["content"] not in memory.render_history()
 
 
-# Teste 9 — breakdown da 2B continua medindo action_history.
 def test_context_breakdown_still_measures_action_history(memory):
     from unittest.mock import MagicMock
     from app.agent.planning.decision_parser import DecisionParser
@@ -274,11 +254,9 @@ def test_context_breakdown_still_measures_action_history(memory):
     history = llm.usage.get_planner_context_history()
     assert len(history) == 1
     assert "action_history" in history[0]["sections"]
-    # Compactado: action_history pequena apesar do conteúdo de 5KB.
     assert history[0]["sections"]["action_history"]["chars"] < 1000
 
 
-# Teste de crescimento — 10-20 write_file de alguns KB.
 def test_growth_scales_with_metadata_not_file_size(memory):
     n = 15
     file_kb = 10_000
@@ -298,7 +276,6 @@ def test_growth_scales_with_metadata_not_file_size(memory):
     after_chars = len(after)
     after_tokens = estimate_tokens(after)
 
-    # Reconstrói o ANTES (formato antigo com args integrais).
     before_lines = [
         _old_style_history_line(
             i, "write_file",
@@ -314,11 +291,8 @@ def test_growth_scales_with_metadata_not_file_size(memory):
     before_chars = sum(len(line) + 1 for line in before_lines)
     before_tokens = estimate_tokens("\n".join(before_lines))
 
-    # DEPOIS deve ser ordens de magnitude menor e independente do
-    # tamanho do arquivo (só metadados: ~150-250 chars/ação).
     assert after_chars < before_chars // 10
     assert after_tokens < before_tokens // 10
-    assert after_chars < n * 500  # ~metadados, não ~n*10KB
-    # Todos os paths ainda presentes.
+    assert after_chars < n * 500
     for i in range(1, n + 1):
         assert f"file_{i:02d}.py" in after

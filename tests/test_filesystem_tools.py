@@ -44,7 +44,6 @@ def test_write_file_allows_editing_existing_file_regardless_of_style(
     write_file("proj", "src/rideService.js", "1")
     write_file("proj", "src/driverService.js", "2")
 
-    # Arquivo já existente: convenção não bloqueia edição, só criação.
     write_file("proj", "src/rideService.js", "1 atualizado")
 
     assert (

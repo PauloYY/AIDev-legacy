@@ -19,7 +19,7 @@ def test_validate_accepts_known_tool(validator):
         arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
     )
 
-    validator.validate(task)  # não deve lançar
+    validator.validate(task)
 
 
 def test_validate_rejects_unknown_tool(validator):
@@ -51,7 +51,7 @@ def test_validate_accepts_analysis_tool_as_dependency(validator):
         ],
     )
 
-    validator.validate(task)  # não deve lançar
+    validator.validate(task)
 
 
 @pytest.mark.parametrize(
@@ -82,11 +82,9 @@ def test_validate_rejects_investigation_tool_as_main_task(
 def test_validate_accepts_investigation_tool_when_allowed(
     validator, tool_name, arguments
 ):
-    # Exceção liberada pelo Runner especificamente logo após um
-    # run_command de teste/build que falhou.
     task = Task(tool=tool_name, arguments=arguments)
 
-    validator.validate(task, allow_investigation=True)  # não deve lançar
+    validator.validate(task, allow_investigation=True)
 
 
 def test_validate_accepts_check_project_and_run_command_as_main_task(validator):
@@ -113,7 +111,7 @@ def test_validate_accepts_investigation_tool_with_investigation_flag(
     validator, tool_name, arguments
 ):
     task = Task(tool=tool_name, arguments=arguments, investigation=True)
-    validator.validate(task)  # não deve lançar
+    validator.validate(task)
 
 
 def test_validate_rejects_investigation_tool_without_flag():
@@ -144,4 +142,4 @@ def test_validate_investigation_flag_does_not_affect_non_investigation_tools(
         arguments={"project_name": "p", "file_path": "a.py", "content": "x"},
         investigation=True,
     )
-    validator.validate(task)  # não deve lançar
+    validator.validate(task)

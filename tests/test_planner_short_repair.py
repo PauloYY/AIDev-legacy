@@ -1,10 +1,4 @@
-"""Fase 3 Etapa 2 — short repair prompt do Planner.
-
-Cobre os 10 casos exigidos: decisão válida sem retry, primeiro retry
-curto, curto que resolve (sem fallback), curto que falha (fallback
-completo), investigation=true, erro de schema, erro de tool, limites,
-trace (short vs full) e UsageTracker.
-"""
+"""Short repair prompt do Planner."""
 
 import json
 
@@ -103,8 +97,6 @@ def _retry_events(trace):
 WRITE_ARGS = {"project_name": "p", "file_path": "a.py", "content": "x"}
 
 
-# Caso 1 — decisão válida: nenhum retry ---------------------------------------
-
 def test_valid_decision_has_no_retry(tmp_path, projects_root):
     provider = ScriptedProvider([
         _task_json("write_file", WRITE_ARGS),
@@ -121,8 +113,6 @@ def test_valid_decision_has_no_retry(tmp_path, projects_root):
     assert _retry_events(trace) == []
     assert all("CURRENT CONTEXT" in p for p in provider.prompts)
 
-
-# Caso 2 — decisão inválida: primeiro retry usa short repair ------------------
 
 def test_first_retry_uses_short_repair(tmp_path, projects_root):
     provider = ScriptedProvider([
@@ -155,8 +145,6 @@ def test_first_retry_uses_short_repair(tmp_path, projects_root):
     assert "reason" in retries[0]
 
 
-# Caso 3 — short repair funciona: sem retry completo ---------------------------
-
 def test_short_repair_success_skips_full_retry(tmp_path, projects_root):
     provider = ScriptedProvider([
         "lixo {{{",
@@ -178,8 +166,6 @@ def test_short_repair_success_skips_full_retry(tmp_path, projects_root):
     assert [e["retry_type"] for e in _retry_events(trace)] == [
         "short_repair"]
 
-
-# Caso 4 — short repair falha: fallback para prompt completo -------------------
 
 def test_short_repair_failure_falls_back_to_full(tmp_path, projects_root):
     provider = ScriptedProvider([
@@ -211,12 +197,10 @@ def test_short_repair_failure_falls_back_to_full(tmp_path, projects_root):
     assert retries[0]["prompt_chars"] < retries[1]["prompt_chars"]
 
 
-# Caso 5 — investigation=true via short repair ---------------------------------
-
 def test_short_repair_fixes_investigation_flag(tmp_path, projects_root):
     read_args = {"project_name": "p", "file_path": "a.py"}
     provider = ScriptedProvider([
-        _task_json("read_file", read_args),  # sem investigation → erro
+        _task_json("read_file", read_args),
         _task_json("read_file", read_args, investigation=True),
         _finish_json(),
     ])
@@ -238,12 +222,10 @@ def test_short_repair_fixes_investigation_flag(tmp_path, projects_root):
         "short_repair"]
 
 
-# Caso 6 — erro de schema: repair traz o schema da tool -------------------------
-
 def test_short_repair_fixes_schema_error(tmp_path, projects_root):
     bad_args = {"project_name": "p", "path": "a.py", "content": "x"}
     provider = ScriptedProvider([
-        _task_json("write_file", bad_args),  # `path` não existe
+        _task_json("write_file", bad_args),
         _task_json("write_file", WRITE_ARGS),
         _finish_json(),
     ])
@@ -257,11 +239,9 @@ def test_short_repair_fixes_schema_error(tmp_path, projects_root):
 
     short = provider.prompts[1]
     assert "CURRENT CONTEXT" not in short
-    assert "file_path" in short  # schema compacto da write_file
+    assert "file_path" in short
     assert "required" in short
 
-
-# Caso 7 — erro de tool: repair lista só o necessário ----------------------------
 
 def test_short_repair_fixes_unknown_tool(tmp_path):
     planner = _real_planner(ScriptedProvider([]))
@@ -278,7 +258,7 @@ def test_short_repair_fixes_unknown_tool(tmp_path):
 
 def test_unknown_tool_fixed_end_to_end(tmp_path, projects_root):
     provider = ScriptedProvider([
-        _task_json("write_files", WRITE_ARGS),  # tool inexistente
+        _task_json("write_files", WRITE_ARGS),
         _task_json("write_file", WRITE_ARGS),
         _finish_json(),
     ])
@@ -294,8 +274,6 @@ def test_unknown_tool_fixed_end_to_end(tmp_path, projects_root):
     assert "CURRENT CONTEXT" not in short
 
 
-# Caso 8 — limite de attempts inalterado ------------------------------------------
-
 def test_short_repair_respects_attempt_limit(tmp_path):
     from app.agent.runner import Runner as R
     assert R.MAX_PLANNER_ATTEMPTS == 5
@@ -307,15 +285,12 @@ def test_short_repair_respects_attempt_limit(tmp_path):
     with pytest.raises(RuntimeError, match="limite de tentativas"):
         runner.run(objective="obj", project_name="p")
 
-    # 1 full + 1 short + 1 full + 1 short + 1 full = 5 (mesmo orçamento).
     assert len(provider.prompts) == 5
     assert runner._stats.iterations == 0 or runner._stats.planner_calls == 5
     types = [e["retry_type"] for e in _retry_events(trace)]
     assert types == ["short_repair", "full_context",
                      "short_repair", "full_context"]
 
-
-# Caso 9 — trace diferencia short e full ------------------------------------------
 
 def test_trace_compares_short_vs_full_sizes(tmp_path, projects_root):
     provider = ScriptedProvider([
@@ -339,14 +314,11 @@ def test_trace_compares_short_vs_full_sizes(tmp_path, projects_root):
     assert retries[1]["retry_type"] == "full_context"
     assert isinstance(short_chars, int) and isinstance(full_chars, int)
     assert short_chars < full_chars
-    # Todos os retries do trace têm iteração, attempt e motivo.
     for event in retries:
         assert event["iteration"] == 1
         assert event["planner_attempt"] >= 1
         assert event["reason"]
 
-
-# Caso 10 — UsageTracker contabiliza e não quebra o formato -------------------------
 
 def test_usage_tracker_counts_request_types(tmp_path, projects_root):
     provider = ScriptedProvider([
@@ -366,21 +338,18 @@ def test_usage_tracker_counts_request_types(tmp_path, projects_root):
     usage = planner.llm.usage
     assert usage.calls == 3
     stats = usage.planner_request_stats()
-    assert stats["normal"]["calls"] == 2  # task-1 + finish
+    assert stats["normal"]["calls"] == 2
     assert stats["short_repair"]["calls"] == 1
     assert "full_retry" not in stats
     total = (stats["normal"]["total_tokens"]
              + stats["short_repair"]["total_tokens"])
     assert total == usage.total.total_tokens
 
-    # Formato público do breakdown inalterado.
     breakdown = usage.breakdown()
     assert "========== TOKEN USAGE BREAKDOWN ==========" in breakdown
     assert "Planner" in breakdown
     assert "TOTAL" in breakdown
 
-
-# Hints unitários + sem contexto vazado ---------------------------------------------
 
 def test_repair_prompt_hints_and_no_full_context():
     planner = _real_planner(ScriptedProvider([]))

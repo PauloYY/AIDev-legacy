@@ -76,8 +76,6 @@ def test_detect_folder_convention_already_inconsistent(tmp_path):
     (tmp_path / "rideService.js").touch()
     (tmp_path / "driver-service.js").touch()
 
-    # Pasta já misturada antes dessa mudança existir — não forçamos
-    # nada retroativamente.
     assert detect_folder_convention(tmp_path, ".js") is None
 
 

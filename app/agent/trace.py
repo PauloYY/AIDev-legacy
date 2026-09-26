@@ -1,20 +1,4 @@
-"""Trace persistente e estruturado de execução (Fase 3 — observabilidade).
-
-Somente observa: nunca altera decisões, prompts, regras de correção,
-ciclo de erros ou lógica de finish. Cada execução do Runner gera um
-arquivo JSONL próprio (um evento por linha), que sobrevive ao término
-do processo e permite reconstruir posteriormente o que aconteceu em
-cada iteração (planner attempts/retries, erros do executor, testes,
-bloqueios de finish, verificação final).
-
-Garantias:
-- Nunca sobrescreve traces anteriores (run_id único por execução).
-- A escrita nunca quebra a execução principal: qualquer falha ao
-  persistir é apenas logada e a run continua normalmente.
-- Nunca armazena conteúdo integral de `write_file`, prompts completos,
-  stdout/stderr enormes ou valores com cara de segredo — apenas
-  resumos truncados e metadados (tool, file_path, exit code etc.).
-"""
+"""Trace persistente e estruturado de execução (- observabilidade)."""
 
 import json
 import logging
@@ -30,8 +14,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# Limites de representação (só afetam o que vai para o trace, nunca os
-# dados reais da execução).
 MAX_COMMAND_CHARS = 500
 MAX_RESULT_CHARS = 2000
 MAX_ERROR_CHARS = 500
@@ -42,7 +24,6 @@ MAX_CHECKLIST_ITEM_CHARS = 200
 
 _EXIT_CODE_RE = re.compile(r"exit code (-?\d+)")
 
-# Chaves cujo valor nunca é persistido integralmente.
 _SENSITIVE_KEY_SUBSTRINGS = (
     "api_key",
     "apikey",
@@ -86,7 +67,7 @@ def sanitize_arguments(tool: Any, arguments: Any) -> dict[str, Any]:
     - `write_file.content` nunca vai integral (vira "<omitted: N chars>").
     - `edit_file.old_text`/`edit_file.new_text` seguem a mesma regra
       (podem conter o arquivo quase inteiro).
-    - Valores com cara de segredo (token, api_key, ...) viram "<redacted>".
+    - Valores com cara de segredo (token, api_key,...) viram "<redacted>".
     - Strings longas são truncadas; valores não-serializáveis viram str.
     - Nunca muta o dict original.
     """
@@ -122,8 +103,6 @@ def sanitize_arguments(tool: Any, arguments: Any) -> dict[str, Any]:
                 compact[key] = _truncate(value, MAX_ARG_VALUE_CHARS)
                 continue
 
-            # Não-string: mantém se for JSON-serializável e curto,
-            # senão resume como string truncada.
             try:
                 encoded = json.dumps(value, ensure_ascii=False, default=str)
             except Exception:
@@ -188,13 +167,6 @@ def default_trace_dir() -> Path:
     return Path(tempfile.gettempdir()) / "aidev-traces"
 
 
-# ---------- P6: rotação dos traces (por quantidade + tamanho total) ----------
-
-# Cada run gera um arquivo próprio (aidev-trace-<stamp>-<run_id>.jsonl),
-# então o crescimento é em Nº de arquivos, não num arquivo único. A
-# rotação aqui é poda dos mais antigos, com defaults seguros e
-# sobrescrevíveis por env (lidos a cada chamada, como default_trace_dir,
-# para permitir override em testes sem reload).
 TRACE_FILE_PREFIX = "aidev-trace-"
 TRACE_FILE_SUFFIX = ".jsonl"
 DEFAULT_TRACE_KEEP_FILES = 20
@@ -210,7 +182,7 @@ def _positive_int_env(name: str, default: int) -> int:
 
 
 def trace_rotation_limits() -> tuple[int, int]:
-    """(keep_files, max_total_bytes) vigentes (P6, só observa).
+    """(keep_files, max_total_bytes) vigentes (só observa).
 
     `AIDEV_TRACE_KEEP_FILES` (default 20) e `AIDEV_TRACE_MAX_TOTAL_MB`
     (default 50). Ausente/inválido → default; <= 0 desativa a dimensão
@@ -229,7 +201,7 @@ def prune_old_traces(
     keep_files: int | None = None,
     max_total_bytes: int | None = None,
 ) -> dict[str, int]:
-    """Remove traces antigos além dos limites (P6). Nunca levanta.
+    """Remove traces antigos além dos limites. Nunca levanta.
 
     Mantém os `keep_files` mais recentes e garante total <=
     `max_total_bytes` (remove os mais antigos primeiro). `keep_path`
@@ -279,7 +251,6 @@ def prune_old_traces(
             except OSError:
                 continue
 
-        # Mais recentes por último (mtime, desempate por nome).
         candidates.sort(key=lambda item: (item[0], item[1]))
         removed = 0
         freed = 0
@@ -328,9 +299,6 @@ class ExecutionTrace:
         self.path = self.trace_dir / f"aidev-trace-{stamp}-{self.run_id}.jsonl"
         self._events = 0
         self._ensure_parent()
-        # P6: cada run nova poda os traces de runs anteriores além dos
-        # limites (best-effort, nunca quebra a run; o arquivo atual —
-        # ainda nem criado — é excluído da poda via keep_path).
         try:
             prune_old_traces(self.trace_dir, keep_path=self.path)
         except Exception as error:
@@ -340,7 +308,6 @@ class ExecutionTrace:
         try:
             self.trace_dir.mkdir(parents=True, exist_ok=True)
         except Exception as error:
-            # Não quebra nada: cada record() tenta de novo e loga.
             logger.warning("Trace: não foi possível criar %s: %s",
                            self.trace_dir, error)
 

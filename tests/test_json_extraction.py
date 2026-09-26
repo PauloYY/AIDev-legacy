@@ -32,8 +32,6 @@ def test_extracts_json_surrounded_by_prose():
 def test_parse_json_object_repairs_unescaped_quotes():
     from app.llm.json_extraction import parse_json_object
 
-    # Simula o modelo citando um nome de classe sem escapar as aspas —
-    # comum em respostas sobre código Java/C++.
     broken = (
         '{"action": "task", "task": {"tool": "write_file", '
         '"arguments": {"content": "corrigir o método da classe '

@@ -15,22 +15,9 @@ logger = logging.getLogger(__name__)
 
 class ProjectSummaryUpdater:
 
-    # Etapa 2E: retry limitado — 1 tentativa inicial + até 2 retries
-    # (máximo 3 chamadas). Nunca retry infinito.
     MAX_SUMMARY_ATTEMPTS = 3
-    # Backoff determinístico entre retries (s); sleep injetável p/ testes.
     RETRY_BACKOFF_SECONDS = (1.0, 2.0)
 
-    # Etapa 2D: limites da REPRESENTAÇÃO usada no prompt (nunca dos dados
-    # reais). Escolhas baseadas no código existente:
-    # - MAX_ARG_VALUE_CHARS = 200: mesmo valor da compactação do
-    #   action_history (OperationalMemory, Etapa 2C), para consistência.
-    # - MAX_RESULT_CHARS = 2000: maior que o resumo de resultado do
-    #   histórico (300, que só sinaliza OK/falha) porque atualizar o
-    #   resumo narrativo precisa de mais evidência; menor que o bloco de
-    #   contexto do Planner (Runner.MAX_CONTEXT_CHARS = 4000), porque
-    #   aqui basta o desfecho + trechos relevantes, não a evidência
-    #   completa (logs integrais seguem disponíveis em outras vias).
     MAX_ARG_VALUE_CHARS = 200
     MAX_RESULT_CHARS = 2000
 
@@ -77,10 +64,6 @@ class ProjectSummaryUpdater:
             try:
                 response = self._generate(prompt, iteration, attempt)
             except LLMConnectionError as error:
-                # Transitório (rede/timeout de leitura): retry limitado.
-                # Erros permanentes (LLMAPIError, LLMRateLimitError,
-                # LLMInvalidResponseError, config, programação) propagam
-                # sem retry.
                 self._log_transient(
                     iteration, attempt, prompt_chars, error
                 )
@@ -100,9 +83,6 @@ class ProjectSummaryUpdater:
                 )
                 return updated_summary
 
-            # Resposta vazia ("" / whitespace / None): plausivelmente
-            # transitória (caso Agnes HTTP 200 + content="") — retry
-            # limitado, nunca aceitar resumo vazio em silêncio.
             self._log_empty(
                 iteration, attempt, prompt_chars, content
             )
@@ -129,7 +109,6 @@ class ProjectSummaryUpdater:
                 attempt=attempt,
             )
         except TypeError:
-            # Compatibilidade com fakes antigos sem o kwarg `attempt`.
             return self.llm.generate(
                 messages=[
                     Message(
@@ -156,7 +135,7 @@ class ProjectSummaryUpdater:
             attempt,
             self.MAX_SUMMARY_ATTEMPTS,
             prompt_chars,
-            prompt_chars // 4,  # mesma aproximação de estimate_tokens
+            prompt_chars // 4,
             len(content or ""),
             self._last_duration_ms(),
         )
@@ -250,7 +229,7 @@ RULES:
     ) -> str:
         """Representação compacta dos argumentos SÓ para o prompt.
 
-        Mesma ideia da Etapa 2C (o prompt registra O QUE aconteceu, não
+        Mesma ideia da (o prompt registra O QUE aconteceu, não
         repete o conteúdo escrito), ajustada a este prompt:
         - write_file.content NUNCA vai integral (vira "<omitted: N chars>").
         - edit_file.old_text/new_text seguem a mesma regra.

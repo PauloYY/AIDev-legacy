@@ -51,10 +51,6 @@ class Runner:
     MAX_CONTEXT_CHARS = 4000
     MAX_LAST_RESORT_RECOVERIES = 3
 
-    # Padrões que indicam que um run_command está escrevendo/alterando
-    # arquivos no disco (heredocs, redirecionamentos, mkdir, etc.).
-    # Usado para tratar shell commands como progresso real, e não só
-    # a tool write_file.
     MUTATION_PATTERNS = (
         "cat >", "cat >>", " > ", " >> ", "tee ", "touch ",
         "mkdir ", "sed -i", "cp ", "mv ", "rm ", "npm init",
@@ -63,9 +59,6 @@ class Runner:
 
     FINISH_CHECK_TOOL = "check_project"
 
-    # Fase 3 (OPT-1): tools puramente observadoras — não alteram o disco
-    # de forma relevante para o veredito do check_project, logo não
-    # invalidam o cache de validação do finish.
     READ_ONLY_TOOLS = frozenset({
         "read_file",
         "list_files",
@@ -115,16 +108,12 @@ class Runner:
         )
         self.on_event = on_event
         self.max_iterations = max_iterations or self.MAX_ITERATIONS
-        # Observabilidade (Fase 3): trace estruturado por execução. None
-        # = cria um ExecutionTrace novo a cada run(); NullTrace desativa.
         self.execution_trace = execution_trace
-        # Fase 4: estado estruturado da tarefa (recriado a cada run()).
         self.task_state = None
         self._task_state_project = ""
         self._task_state_saved_sig = None
 
     def _emit(self, event_type: str, **data):
-        # Fase 3: contadores de performance (não alteram eventos).
         stats = getattr(self, "_stats", None)
         if stats is not None:
             if event_type == "planner_error":
@@ -140,7 +129,6 @@ class Runner:
                 )
             )
 
-    # ---------- Fase 4: TaskState (atualizações centralizadas) ----------
 
     def _init_task_state(self, objective: str, project_name: str = ""):
         """Pipeline prompt → canonical → Interpreter → TaskState.
@@ -201,9 +189,6 @@ class Runner:
         if fresh is None or not bool(
                 getattr(Config, "task_state_persist", False)):
             return fresh
-        # Recuperação (integração Fase 4): mesmo task_id → adota o
-        # estado persistido (continuidade); diferente → arquiva e usa
-        # o novo. Tudo best-effort.
         try:
             from app.agent.taskstate.persistence import (
                 archive_task_state,
@@ -298,7 +283,6 @@ class Runner:
         except Exception as error:
             logger.warning("TaskState verification falhou: %s", error)
 
-    # ---------- Fase 4 (integração): consumo e persistência ----------
 
     def _downstream_objective(self, objective: str) -> str:
         """Objective que Planner/Executor/checklist/summary recebem.
@@ -321,11 +305,11 @@ class Runner:
 
     def _with_task_state(self, context,
                            problem_detail: bool = True) -> str:
-        """Injeta o bloco TASK STATE no início do contexto (Fase 4/6).
+        """Injeta o bloco TASK STATE no início do contexto.
 
         Com AIDEV_TASK_STATE_CONTEXT=0 ou sem estado: devolve o
         contexto intacto. Com 1: `TASK STATE:\\n<render_compact>\\n\\n`
-        + contexto — estado semântico primeiro, evidência operacional
+        + contexto - estado semântico primeiro, evidência operacional
         depois, sem conteúdos integrais nem duplicação do OBJECTIVE
         (a seção OBJECTIVE do prompt já o carrega).
         `problem_detail=False` (Executor): só contagens de problemas,
@@ -347,7 +331,6 @@ class Runner:
                     include_objective=False, original_ref_chars=200,
                     problem_detail=problem_detail)
             except TypeError:
-                # Compat: TaskState sem o parâmetro novo.
                 block = state.render_compact(
                     include_objective=False, original_ref_chars=200)
             if not block.strip():
@@ -369,7 +352,7 @@ class Runner:
                 return
             statuses = getattr(self.checklist, "statuses", None)
             if statuses is None:
-                return  # doubles sem checklist real: nada a espelhar
+                return
             try:
                 blocked = (
                     self.error_checklist.pending_count > 0)
@@ -399,7 +382,7 @@ class Runner:
             return None
 
     def _save_task_state(self, reason: str, force: bool = False) -> None:
-        """Persiste .aidev/task_state.json (atômico, best-effort).
+        """Persiste.aidev/task_state.json (atômico, best-effort).
 
         Com AIDEV_TASK_STATE_PERSIST=0: nada faz. Sem mudança desde o
         último save (e sem force): nada faz. Falha → evento
@@ -431,7 +414,6 @@ class Runner:
         except Exception as error:
             logger.warning("Save do TaskState falhou: %s", error)
 
-    # ---------- Fase 5: test gate + ciclo de correção ----------
 
     @staticmethod
     def _gate_command(task) -> str:
@@ -480,7 +462,7 @@ class Runner:
             return []
 
     def _check_test_gate(self, task, iteration) -> str | None:
-        """Mensagem de bloqueio ou None (Fase 5).
+        """Mensagem de bloqueio ou None.
 
         Com AIDEV_ERROR_TEST_GATE=0: nunca bloqueia (problemas seguem
         registrados). Caso contrário bloqueia retest com problemas
@@ -524,7 +506,7 @@ class Runner:
             return None
 
     def _known_problems_block(self) -> str:
-        """Bloco KNOWN PROBLEMS p/ o Executor (Fase 5, capped)."""
+        """Bloco KNOWN PROBLEMS p/ o Executor (capped)."""
         try:
             if not bool(getattr(Config, "error_analyzer", False)):
                 return ""
@@ -610,7 +592,7 @@ class Runner:
     def _analyze_test_failure_unified(
         self, command: str, result, iteration,
     ) -> list[str]:
-        """Uma análise → TaskState + Checklist (Fase 6, 1 LLM call).
+        """Uma análise → TaskState + Checklist (1 LLM call).
 
         Substitui checklist-generate(LLM) + analyzer(LLM) por UMA
         chamada que alimenta os dois. Fallback 100% determinístico
@@ -638,8 +620,6 @@ class Runner:
             apply_fn = getattr(self.error_checklist, "apply_unified",
                                None)
             if apply_fn is None:
-                # Double legado sem projeção: espelha itens existentes
-                # (comportamento Fase 4; checklist segue operacional).
                 try:
                     items = getattr(self.error_checklist, "_items",
                                     None) or []
@@ -702,7 +682,7 @@ class Runner:
             logger.warning("Trace update do TaskState falhou: %s", error)
 
     def _note_test_run(self, tool: str, arguments: dict, succeeded: bool) -> None:
-        """Conta execuções de teste/build (Fase 3, só métrica)."""
+        """Conta execuções de teste/build (só métrica)."""
 
         stats = getattr(self, "_stats", None)
         if stats is None:
@@ -851,8 +831,6 @@ class Runner:
             tool = self.tools.get(tool_name)
             self.validator.schema_validator.validate(tool, task.arguments)
         except Exception:
-            # Os argumentos em si também estão errados — não dá pra
-            # executar com segurança; deixa a run crashar.
             return None
 
         self._emit(
@@ -923,11 +901,6 @@ class Runner:
         """
 
         if tool == "run_command":
-            # O formato é controlado por run_command._format_result, cuja
-            # primeira linha é sempre o veredito real ("STATUS: success
-            # (exit code 0)" ou "STATUS: failure ..."). Buscar no texto
-            # inteiro gerava falso-positivo quando a saída do comando
-            # continha o literal "STATUS: success" apesar de falhar.
             first_line = str(result).lstrip().split("\n", 1)[0]
             return first_line.startswith("STATUS: success")
 
@@ -936,11 +909,11 @@ class Runner:
     def _execute_dependency(self, dependency):
         """Executa UMA dependency, capturando erro.
 
-        Retorna (result, succeeded, error_or_None) — exatamente a
+        Retorna (result, succeeded, error_or_None) - exatamente a
         mesma semântica do loop sequencial legado: exceção da tool
         vira string "ERRO NA DEPENDENCY" + succeeded=False; comando
         com exit code != 0 é succeeded=False SEM exceção. Usado tanto
-        pelo caminho sequencial quanto pelo batch paralelo (Etapa 3).
+        pelo caminho sequencial quanto pelo batch paralelo.
         """
 
         try:
@@ -992,8 +965,6 @@ class Runner:
             return
 
         if succeeded:
-            # Fase 4: testes verdes com problemas abertos = correção
-            # confirmada por execução real (não por autoavaliação).
             try:
                 state = getattr(self, "task_state", None)
                 if state is not None and state.open_problems:
@@ -1003,7 +974,6 @@ class Runner:
             except Exception as error:
                 logger.warning("TaskState correction falhou: %s", error)
             self.error_checklist.clear()
-            # Fase 4 (integração): desbloqueio espelhado no plan.
             self._sync_task_plan()
             self._save_task_state("tests_green")
             return
@@ -1013,16 +983,12 @@ class Runner:
         if text.startswith("TIMEOUT:") or text.startswith(
             "TOOL EXECUTION ERROR:"
         ):
-            # Infraestrutura, não evidência de teste: não descarta os
-            # itens reais anteriores nem finge que está tudo certo.
             reason = (
                 "timed out"
                 if text.startswith("TIMEOUT:")
                 else "failed with an infrastructure error"
             )
             self.error_checklist.note_infra_failure(command, reason)
-            # Fase 4: infra também é problema (não bloqueia geração
-            # futura de itens reais).
             try:
                 state = getattr(self, "task_state", None)
                 if state is not None:
@@ -1036,19 +1002,12 @@ class Runner:
             return
 
         if bool(getattr(Config, "error_analyzer", False)):
-            # Fase 6: UMA análise → TaskState + Checklist + Planner +
-            # Executor (1 LLM call; fallback determinístico sem LLM).
             self._analyze_test_failure_unified(
                 command, result, iteration)
         else:
-            # Legado (Fase 5 desligado): checklist com LLM própria +
-            # espelho no TaskState (comportamento anterior intacto).
             try:
                 self.error_checklist.generate(command, result, iteration)
             except Exception as error:
-                # O checklist de erros é um auxílio, não um requisito —
-                # se a extração falhar, o Planner ainda tem o texto
-                # bruto do resultado no contexto normal.
                 logger.warning(
                     "Falha ao gerar checklist de erros: %s", error
                 )
@@ -1063,7 +1022,6 @@ class Runner:
                             kind="test_failure", iteration=iteration)
             except Exception as error:
                 logger.warning("TaskState problem falhou: %s", error)
-        # Fase 4 (integração): falha espelhada no plan + persistência.
         self._sync_task_plan()
         self._save_task_state("test_failure")
 
@@ -1083,9 +1041,9 @@ class Runner:
     ) -> str | None:
         """Motivo do skip do SummaryUpdater, ou None se deve atualizar.
 
-        Etapa 4 (congelada, só AIDEV_SMART_SUMMARY): leitura pura.
-        Etapa 6 (só AIDEV_COMPACT_EXECUTOR): operações comprovadamente
-        sem mudança de estado — check_project (análise estática, o
+        (congelada, só AIDEV_SMART_SUMMARY): leitura pura.
+        (só AIDEV_COMPACT_EXECUTOR): operações comprovadamente
+        sem mudança de estado - check_project (análise estática, o
         veredito já vai ao Planner via resultado + finish gate) e
         run_command que nem muta (MUTATION_PATTERNS) nem é teste/build
         (ex.: --version, ls; sem sinal de teste para o resumo). Tudo o
@@ -1132,27 +1090,17 @@ class Runner:
             f"...[truncated, {omitted} characters omitted]"
         )
 
-    # ---------- Etapa 5: compactação p/ o Planner (veredito primeiro) ----------
 
-    # Planner precisa do VEREDITO, não do log integral: exit code,
-    # STATUS, falhas e arquivos envolvidos. O resultado INTEGRAL segue
-    # disponível onde importa — error checklist (gerado do integral,
-    # Etapa 4), histórico determinístico (resumo) e Executor (cap 4000
-    # da Etapa 4). Aqui só o que vai no prompt do Planner encolhe.
     MAX_COMPACT_RESULT_CHARS = 2000
     MAX_COMPACT_SUMMARY_CHARS = 2000
-    # Cauda de blocos de erro acumulados no `context` (finish blocks,
-    # loops, repetições): sem teto, 10 finishs bloqueados = dezenas de
-    # KB reenviados a cada decisão. 2 blocos ≈ erro atual + anterior;
-    # o estado que os gerou segue no error checklist / memória.
     MAX_ERROR_TAIL_BLOCKS = 2
 
     def _truncate_compact(self, text) -> str:
-        """Head+tail com veredito preservado (Etapa 5).
+        """Head+tail com veredito preservado.
 
         Mantém o início (STATUS na 1ª linha do run_command, header
         PARENT TASK no task_context) e o fim (resumo do pytest, traceback
-        final, última falha) — o meio omitido é log verboso. Marca a
+        final, última falha) - o meio omitido é log verboso. Marca a
         omissão com o total, nunca silenciosa. Textos <= 2000 voltam
         intactos (byte-idênticos ao legado).
         """
@@ -1170,7 +1118,7 @@ class Runner:
         )
 
     def _truncate_for_planner(self, text) -> str:
-        """Truncamento conforme a flag Etapa 5 (nunca silencioso).
+        """Truncamento conforme a flag (nunca silencioso).
 
         Flag off: _truncate legado (head 4000). Flag on: _truncate_compact
         (head 800 + tail 1000, veredito preservado). Textos pequenos são
@@ -1187,7 +1135,7 @@ class Runner:
         return self._truncate(text)
 
     def _truncate_summary_compact(self, summary) -> str:
-        """Resumo narrativo capped (Etapa 5): head + marcador."""
+        """Resumo narrativo capped: head + marcador."""
         text = str(summary or "")
         limit = self.MAX_COMPACT_SUMMARY_CHARS
         if len(text) <= limit:
@@ -1199,11 +1147,11 @@ class Runner:
         )
 
     def _append_context_error(self, context: str, block: str) -> str:
-        """Anexa bloco de erro ao contexto com teto de cauda (Etapa 5).
+        """Anexa bloco de erro ao contexto com teto de cauda.
 
         Legado (flag off): concatenação pura, como antes.
         Compacto: mantém no máximo MAX_ERROR_TAIL_BLOCKS blocos de
-        erro na cauda — o mais antigo além do teto é descartado, com
+        erro na cauda - o mais antigo além do teto é descartado, com
         marcador explícito. Blocos considerados: VALIDATION ERROR,
         REPETITION*, PREVIOUS ATTEMPT CORRECTION, REPEATED ERROR,
         INVESTIGATION PERFORMED.
@@ -1220,7 +1168,6 @@ class Runner:
             "\n\nREPEATED ERROR",
             "\n\nINVESTIGATION PERFORMED",
         )
-        # Localiza todos os inícios de bloco de erro na cauda.
         starts: list[int] = []
         for marker in markers:
             pos = 0
@@ -1228,14 +1175,11 @@ class Runner:
                 idx = combined.find(marker, pos)
                 if idx == -1:
                     break
-                # +2 pula os "\n\n" para o índice do conteúdo.
                 starts.append(idx + 2)
                 pos = idx + 2
         starts.sort()
         if len(starts) <= self.MAX_ERROR_TAIL_BLOCKS:
             return combined
-        # Descarta os mais antigos além do teto, preservando o prefixo
-        # (memória/resultado) antes do primeiro bloco mantido.
         keep_from = starts[-(self.MAX_ERROR_TAIL_BLOCKS):][0]
         dropped = len(starts) - self.MAX_ERROR_TAIL_BLOCKS
         prefix = combined[:starts[0]]
@@ -1261,14 +1205,12 @@ class Runner:
         servem como fonte de verdade caso o resumo tenha esquecido ou
         distorcido algo.
 
-        files_text (Etapa 4): seção de arquivos pré-computada (ex.:
+        files_text: seção de arquivos pré-computada (ex.:
         linha compacta "sem alterações"). None = listagem integral.
         """
 
         error_block = self.error_checklist.render()
 
-        # files_text=None = listagem integral (legado + doubles sem o
-        # parâmetro novo). Só repassa o override quando houver um.
         if files_text is None:
             operational_text = self.operational_memory.render(
                 project_name)
@@ -1288,7 +1230,7 @@ class Runner:
     def _build_memory_block_compact(
         self, project_name: str, summary: str, files_text: str | None = None
     ) -> str:
-        """Bloco de memória compacto p/ o Planner (Etapa 5).
+        """Bloco de memória compacto p/ o Planner.
 
         Mesmas seções do legado (resumo, checklist, erros, memória),
         com: resumo capped em 2000 (head), histórico em janela de 8 +
@@ -1348,17 +1290,15 @@ class Runner:
     def _build_memory_block_tracked(
         self, project_name: str, summary: str
     ) -> str:
-        """Bloco de memória com listagem estrutural (Etapa 4).
+        """Bloco de memória com listagem estrutural.
 
         Quando AIDEV_COMPACT_CONTEXT=1, a lista integral de arquivos só
         é reenviada se a estrutura mudou desde a última verificação
         (hash da listagem, mantido em `self._file_list_state` e zerado
         por run); senão vai uma linha explícita "sem alterações".
-        Comportamento legado caso contrário. Nunca altera decisões —
-        só o volume reenviado.
-
-        Etapa 5: resolvida a listagem (Etapa 4), escolhe o bloco
-        compacto ou o integral conforme AIDEV_COMPACT_PLANNER.
+        Comportamento legado caso contrário. Nunca altera decisões -
+        só o volume reenviado. O bloco compacto ou o integral segue
+        a flag AIDEV_COMPACT_PLANNER.
         Doubles legados sem os métodos novos caem para o legado.
         """
 
@@ -1390,7 +1330,6 @@ class Runner:
         render_state_fn = getattr(
             self.operational_memory, "render_files_state", None)
         if render_state_fn is None:
-            # Doubles legados sem o método novo: listagem integral.
             return _block(project_name, summary)
         last_state = getattr(self, "_file_list_state", None)
         files_text, new_state = (
@@ -1401,7 +1340,7 @@ class Runner:
         return _block(project_name, summary, files_text)
 
     def _note_tool_execution(self, tool_name: str) -> None:
-        """Invalida o cache do finish-check após escrita/efeito (Fase 3).
+        """Invalida o cache do finish-check após escrita/efeito.
 
         Leituras puras preservam o cache: o veredito do check_project é
         função determinística dos fontes no disco. O próprio check_project
@@ -1413,12 +1352,12 @@ class Runner:
             self._finish_check_cache = self._FINISH_CHECK_MISS
 
     def _cached_finish_check(self, project_name: str) -> str | None:
-        """check_project com cache entre finishs consecutivos (Fase 3).
+        """check_project com cache entre finishs consecutivos.
 
         Um finish bloqueado dá `continue` sem executar nada; o próximo
         finish revalidaria arquivos idênticos (N subprocess/containers).
         A verificação LLM (FinalVerification, estocástica) continua
-        sempre fresca — só o veredito determinístico é reutilizado.
+        sempre fresca - só o veredito determinístico é reutilizado.
         """
 
         cached = getattr(
@@ -1699,8 +1638,6 @@ class Runner:
         if not removed:
             return None
 
-        # Revalidação posterior: a remoção pode ter afetado o projeto.
-        # check_project fresco (o cache foi invalidado acima).
         check_error = self._run_finish_check(project_name)
         self._finish_check_cache = check_error
         self._note_state_verification(
@@ -1731,14 +1668,9 @@ class Runner:
         self._stats = AgentStats()
         self._finish_check_cache = self._FINISH_CHECK_MISS
         self._last_final_verification_status = "not_run"
-        # Etapa 4: estado da listagem estrutural (hash da última
-        # listagem enviada ao Planner). Zerado por run.
         self._file_list_state = None
         run_start = time.monotonic()
 
-        # Fase 3 (trace): um arquivo JSONL próprio por execução. Nunca
-        # altera o comportamento — só observa. Falhas ao persistir são
-        # contidas dentro de ExecutionTrace.record().
         trace = self.execution_trace
         if trace is None:
             try:
@@ -1774,10 +1706,6 @@ class Runner:
         self.checklist.reset()
         self.error_checklist.reset()
         self.planner_error_memory.reset()
-        # Fase 4 (integração): pipeline prompt → canonicalização →
-        # Interpreter → TaskState → Planner/Executor. O TaskState é a
-        # fonte estruturada (persistido + auditado no trace); com as
-        # flags de integração desligadas, o fluxo volta ao legado.
         self._task_state_project = project_name
         self._task_state_saved_sig = None
         self.task_state = self._init_task_state(objective,
@@ -1788,9 +1716,6 @@ class Runner:
         except Exception as error:
             logger.warning("Trace do TaskState falhou: %s", error)
         self._save_task_state("init", force=True)
-        # Objective downstream: canônico com AIDEV_CANONICAL_OBJECTIVE=1
-        # (-Planner/Executor/checklist/summary/verificação), original
-        # caso contrário. run_start acima já registrou o original.
         downstream_objective = self._downstream_objective(objective)
         self._current_objective = downstream_objective
         self._sync_task_plan()
@@ -1798,13 +1723,9 @@ class Runner:
         try:
             self.checklist.generate(downstream_objective)
         except Exception as error:
-            # O checklist é um auxílio, não um requisito — se a
-            # geração falhar (erro de LLM, JSON malformado etc.), o
-            # agente segue sem ele em vez de travar a run inteira.
             logger.warning(
                 "Falha ao gerar checklist do objetivo: %s", error
             )
-        # Fase 4 (integração): plano inicial espelhado no TaskState.
         self._sync_task_plan()
 
         context = (
@@ -1813,23 +1734,12 @@ class Runner:
         )
 
         task_history = deque(maxlen=self.MAX_TASK_HISTORY)
-        # Assinatura (tool, args) -> época da última execução bem-sucedida.
-        # Uma re-execução idêntica só é bloqueada quando NENHUMA outra
-        # execução ocorreu desde aquele sucesso (sem evidência nova).
-        # Qualquer execução posterior que não seja uma mutação
-        # bem-sucedida — falha de teste/tool OU nova investigação —
-        # avança a época e libera nova tentativa, que pode ser uma
-        # correção informada pela nova evidência. Laços reais seguem
-        # contidos pelo detector de janela, estagnação e max_iterations.
         succeeded_mutations: dict = {}
         progress_epoch = 0
         stagnant_iterations = 0
         planner_retry_context = ""
         iteration = 0
 
-        # Fase 3 Etapa 2: short repair só quando o Planner real expõe o
-        # caminho alternativo. Doubles legados (ex.: FakePlanner) seguem
-        # exatamente o fluxo de retry completo de antes.
         can_short_repair = (
             hasattr(self.planner, "plan_with_prompt")
             and hasattr(self.planner, "build_repair_prompt")
@@ -1867,10 +1777,6 @@ class Runner:
             planner_attempts = 0
             allow_investigation = False
             used_investigation_budget = False
-            # Estado do short repair: só vive dentro da iteração. O
-            # retry_context também é zerado aqui a cada iteração — sem
-            # isso, a correção de uma iteração anterior vazava para
-            # todos os prompts completos seguintes da run.
             planner_retry_context = ""
             short_repair = None
 
@@ -1889,8 +1795,6 @@ class Runner:
                             request_type="short_repair",
                         )
                     else:
-                        # Fase 4 (integração): objective canônico +
-                        # bloco TASK STATE antes do contexto operacional.
                         retry_context = (
                             f"{context}\n\n"
                             f"{planner_retry_context}"
@@ -1925,10 +1829,6 @@ class Runner:
                         allow_investigation = is_investigation_task and (
                             free_pass or budget_available
                         )
-                        # Só consome o orçamento periódico quando ele foi
-                        # de fato o motivo da liberação — o passe livre
-                        # pós-falha de teste/build é ilimitado e não deve
-                        # gastar essa janela.
                         used_investigation_budget = (
                             is_investigation_task
                             and not free_pass
@@ -2002,11 +1902,6 @@ class Runner:
                             "O Planner excedeu o limite de tentativas."
                         ) from error
 
-                    # Fase 3 Etapa 2: alternância curto → completo. A
-                    # falha veio do attempt completo (short_repair None)
-                    # ou do curto (short_repair armado)? O orçamento
-                    # MAX_PLANNER_ATTEMPTS é o mesmo de antes — o curto
-                    # nunca cria attempts, iterações ou loops novos.
                     failed_was_short = short_repair is not None
                     short_repair = None
 
@@ -2050,18 +1945,6 @@ class Runner:
                             )
                             continue
 
-                    # Fallback obrigatório: retry completo existente.
-                    # Também é o caminho integral para Planners sem
-                    # suporte a repair (comportamento anterior).
-                    # Verificação extra: se este exato erro já tinha
-                    # sido cometido antes (nesta mesma iteração ou em
-                    # alguma anterior), a correção genérica já não
-                    # funcionou da última vez — em vez de repetir a
-                    # mesma mensagem fraca, recalcula com uma correção
-                    # bem mais explícita e direta, pra aumentar a
-                    # chance de acertar já na próxima tentativa, dentro
-                    # do mesmo orçamento normal de MAX_PLANNER_ATTEMPTS
-                    # (não pula tentativa nenhuma, só melhora o pedido).
                     if already_forbidden:
                         planner_retry_context = (
                             "REPEATED ERROR — READ CAREFULLY:\n"
@@ -2086,8 +1969,6 @@ class Runner:
                             "Return only the decision JSON expected by the Planner."
                         )
 
-                    # Mede DEPOIS de definir o retry_context, para o
-                    # prompt_chars refletir o que será enviado de fato.
                     if can_short_repair:
                         full_chars = self.planner.full_prompt_chars(
                             downstream_objective,
@@ -2137,21 +2018,16 @@ class Runner:
                         checklist_progress=decision.checklist_progress,
                     )
 
-                # Fase 4: decisão válida → TaskState (observação pura).
                 self._note_task_decision(iteration, decision)
 
                 break
 
             marked = self.checklist.mark_done(decision.checklist_progress)
-            # Fase 4 (integração): conclusões espelhadas no plan.
             self._sync_task_plan()
 
             if marked:
                 self._emit("checklist_updated", marked=marked)
 
-            # Fase 5: gate de retest — teste/validação com problemas
-            # pendentes não roda de novo; volta p/ correção com aviso
-            # estruturado (estado esperado, nunca falha de infra).
             if decision.action == DecisionAction.TASK:
                 gate_message = self._check_test_gate(
                     decision.task, iteration)
@@ -2200,7 +2076,6 @@ class Runner:
                     gate="check_project",
                     passed=check_error is None,
                 )
-                # Fase 4: veredicto do gate → TaskState.
                 self._note_state_verification(
                     "check_project", check_error is None,
                     str(check_error)[:200] if check_error else "",
@@ -2458,7 +2333,6 @@ class Runner:
                     else None,
                     perf_summary=perf_summary,
                 )
-                # Fase 4 (integração): estado final persistido.
                 self._save_task_state("run_end", force=True)
                 return decision.content
 
@@ -2502,8 +2376,6 @@ class Runner:
                     iteration
                 )
 
-            # Detecta repetição consecutiva/cíclica E estagnação
-            # (muitas iterações seguidas sem nenhuma escrita real).
             task_signature = self._task_signature(task)
             task_history.append(task_signature)
 
@@ -2567,13 +2439,6 @@ class Runner:
 
             dependency_results = []
 
-            # Etapa 3: dependencies puramente observadoras (read_file,
-            # list_files, ...) executam em paralelo — elas não alteram
-            # nada e não consomem o resultado umas das outras. Qualquer
-            # dependency fora desse conjunto (ex.: run_command, que
-            # pode mutar via shell) mantém o caminho sequencial
-            # legado. O bookkeeping abaixo continua sequencial e em
-            # ordem, então memória/eventos/trace são determinísticos.
             deps = list(task.dependencies)
             parallel_outcomes = None
             if (
@@ -2588,8 +2453,6 @@ class Runner:
                             for d in deps
                         ]
                     )
-                    # Recompõe (result, succeeded, error) na ordem de
-                    # entrada (determinístico).
                     parallel_outcomes = [
                         (
                             item.value[0],
@@ -2727,11 +2590,6 @@ class Runner:
                 )
 
                 try:
-                    # Fase 4 (integração): TASK + TASK STATE +
-                    # resultados das dependencies (sem virar Planner).
-                    # Fase 5: + KNOWN PROBLEMS (hipóteses p/ verificar
-                    # com read_file, nunca ordens cegas). Fase 6: TASK
-                    # STATE com contagens (detalhe no KNOWN PROBLEMS).
                     executor_context = self._with_task_state(
                         task_context, problem_detail=False)
                     problems_block = self._known_problems_block()
@@ -2901,16 +2759,6 @@ class Runner:
 
                 break
 
-            # Bloqueia repetição exata de uma operação mutante
-            # (write_file ou run_command que escreve arquivos) que já
-            # foi executada com sucesso antes SEM que nenhuma outra
-            # execução tenha ocorrido desde então — nesse caso refazê-la
-            # é inútil, as mudanças já existem. Se houve falha posterior
-            # (teste quebrou, tool errou) ou nova investigação, a
-            # repetição pode ser uma tentativa legítima de correção
-            # informada pela nova evidência, e é permitida (outros
-            # detectores — janela de tasks, estagnação, max_iterations
-            # — seguem valendo).
             execution_signature = (
                 execution.tool,
                 repr(execution.arguments),
@@ -2962,8 +2810,6 @@ class Runner:
 
                 continue
 
-            # Fase 5: tentativa mutante começa → problemas
-            # candidatos viram in_progress (hipótese em trabalho).
             self._mark_correction_attempt(
                 iteration, execution.tool, execution.arguments)
 
@@ -2992,8 +2838,6 @@ class Runner:
                     error=str(error),
                 )
 
-                # Fase 5: tentativa mutante falhou → in_progress vira
-                # blocked (precisa de nova abordagem).
                 self._mark_attempt_failed(
                     execution.tool, execution.arguments)
 
@@ -3011,10 +2855,6 @@ class Runner:
                 if execution_succeeded and self._is_mutating(
                     execution.tool, execution.arguments
                 ):
-                    # Só zera a estagnação para operações inéditas: um
-                    # sucesso com conteúdo idêntico a sucesso anterior
-                    # não é evidência de progresso (a correção repetida
-                    # precisa se provar no teste seguinte).
                     if execution_signature not in succeeded_mutations:
                         stagnant_iterations = 0
                     succeeded_mutations[execution_signature] = progress_epoch
@@ -3052,8 +2892,6 @@ class Runner:
             ):
                 progress_epoch += 1
 
-            # Fase 5: mutação OK → Correction vinculada (problemas →
-            # pending_verification); o teste confirmará depois.
             if execution_succeeded:
                 self._note_correction_applied(
                     iteration, execution.tool, execution.arguments)
@@ -3065,7 +2903,6 @@ class Runner:
                 execution_succeeded,
                 iteration,
             )
-            # Fase 4: execução principal → progress do TaskState.
             self._note_task_progress(
                 iteration, execution.tool, execution.arguments,
                 result, execution_succeeded)
@@ -3075,15 +2912,6 @@ class Runner:
                     execution.tool, execution.arguments
                 )
                 if skip_reason is not None:
-                    # Etapa 4 (reads) + Etapa 6 (análise/inspeção sem
-                    # mudança de estado): nada a incorporar ao resumo
-                    # narrativo. A evidência segue disponível no próximo
-                    # contexto (RESULTADO inline), no histórico e — para
-                    # teste/build — no error checklist, que já foi
-                    # atualizado acima com o resultado INTEGRAL. `summary`
-                    # local equivale ao armazenado (toda atualização
-                    # bem-sucedida o reatribui; falha aborta a run).
-                    # Nenhum texto é fabricado: pular ≠ resumir.
                     self._stats.summary_skipped += 1
                     trace.record(
                         "summary_skipped",
@@ -3120,9 +2948,6 @@ class Runner:
                 )
                 raise
 
-            # Etapa 5: o Planner recebe task_context + resultado em
-            # versão compacta (veredito preservado); Executor e error
-            # checklist já usaram os valores integrais acima.
             context = (
                 f"{self._build_memory_block_tracked(project_name, summary)}\n\n"
                 f"{self._truncate_for_planner(task_context)}\n\n"

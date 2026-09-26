@@ -53,16 +53,10 @@ class PlannerErrorMemory:
 
         return "\n".join(lines)
 
-    # Etapa 5: janela menor para o Planner compacto. Erros de decisão
-    # são proibições permanentes, mas as mais recentes são as que o
-    # Planner tem mais chance de repetir (mesmo padrão de decisão);
-    # as antigas já moldaram o comportamento e seguem no histórico
-    # via retry_context quando se repetem. 5 cobre os padrões
-    # distintos típicos de uma run sem reenviar dezenas de linhas.
     MAX_ERRORS_RENDERED_COMPACT = 5
 
     def render_compact(self, limit: int | None = None) -> str:
-        """Últimos N erros proibidos (Etapa 5). `render()` intacto."""
+        """Últimos N erros proibidos. `render()` intacto."""
         if not self._seen:
             return (
                 "FORBIDDEN ERRORS (none recorded yet in this run)."
